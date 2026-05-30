@@ -236,7 +236,7 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 		}
 	}
 
-	// 检查 GB42590 特征
+	// 检查 Remote ID 特征（GB42590 + ASTM）
 	raw := packet.Data()
 
 	gbPositions := s.findGB42590Features(raw)
@@ -245,7 +245,7 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 			"trailing_bytes", fmt.Sprintf("%x", raw[pos:pos+min(10, len(raw)-pos)]))
 	}
 
-	// 设备分类
+	// 设备分类（双协议支持）
 	deviceType := s.classifyDevice(srcMAC, raw, gbPositions)
 
 	switch deviceType {
@@ -275,15 +275,18 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	}
 }
 
-// 1. +++ 简化设备分类 +++
+// classifyDevice 设备分类（ASTM + GB42590）
 func (s *Sniffer) classifyDevice(mac string, raw []byte, gb []int) string {
 	if s.isValidGB42590Device(raw, gb) {
+		return "drone"
+	}
+	if s.isValidASTMDevice(raw) {
 		return "drone"
 	}
 	return "normal"
 }
 
-// 2. +++ 只检查 GB42590 +++
+// isValidGB42590Device 检查 GB42590 特征
 func (s *Sniffer) isValidGB42590Device(raw []byte, gb []int) bool {
 	for _, pos := range gb {
 		if s.isValidGB42590RemoteID(raw, pos) {
@@ -293,7 +296,27 @@ func (s *Sniffer) isValidGB42590Device(raw []byte, gb []int) bool {
 	return false
 }
 
-// 3. +++ 只保留 GB42590 特征查找 +++
+// isValidASTMDevice 检查 ASTM F3411-22a 特征
+// 通过 Wi-Fi NAN OUI (06:05:04) + Vendor Specific Attribute (0xFD) 识别，
+// 并验证消息类型 0-5 以确认是 ASTM Remote ID（而非其他 NAN 数据）
+func (s *Sniffer) isValidASTMDevice(raw []byte) bool {
+	// 搜索 Wi-Fi NAN OUI (06:05:04) 并验证 Vendor Type (0xFD)
+	for i := 0; i < len(raw)-4; i++ {
+		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
+			// 检查 NAN Vendor Specific Attribute Type 0xFD
+			if i+4 < len(raw) && raw[i+4] == 0xFD {
+				msgType := (raw[i+3] >> 4) & 0x0F
+				// 只有 ASTM Remote ID 消息类型 (0-5) 才识别为无人机
+				if msgType <= 5 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// findGB42590Features 查找 GB42590 特征位置
 func (s *Sniffer) findGB42590Features(data []byte) []int {
 	var positions []int
 	for i := 0; i < len(data)-3; i++ {
@@ -304,6 +327,7 @@ func (s *Sniffer) findGB42590Features(data []byte) []int {
 	return positions
 }
 
+// isValidGB42590RemoteID 验证 GB42590 Remote ID 有效性
 func (s *Sniffer) isValidGB42590RemoteID(data []byte, pos int) bool {
 	if pos+10 > len(data) {
 		return false

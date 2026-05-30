@@ -121,9 +121,9 @@ debug:
 ## 协议说明
 
 ### ASTM F3411-22a
-- OUI: `06:05:04`
-- Vendor Type: `0xFD`
-- 消息类型：Basic ID / Location / System
+- 通过 **Wi-Fi NAN (Neighbor Awareness Networking)** 承载
+- NAN OUI: `06:05:04`，Vendor Specific Attribute Type: `0xFD`
+- 消息类型：Basic ID / Location / Authentication / Self ID / System / Operator ID
 
 ### GB42590-2023 (C-RID)
 - OUI: `FA:0B:BC`

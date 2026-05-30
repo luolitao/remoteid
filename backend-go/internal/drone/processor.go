@@ -369,6 +369,11 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 			if f, err := strconv.ParseFloat(alt, 64); err == nil {
 				drone.Altitude = f
 			}
+		} else if height, ok := msg.Data["height_m"]; ok {
+			// ASTM: 当 altitude 无效时，使用 height_m（离地高度）作为补充
+			if f, err := strconv.ParseFloat(height, 64); err == nil && f > 0 {
+				drone.Altitude = f
+			}
 		}
 		if speed, ok := msg.Data["speed_h"]; ok {
 			if f, err := strconv.ParseFloat(speed, 64); err == nil {
@@ -409,6 +414,11 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 		}
 		if classification, ok := msg.Data["classification"]; ok {
 			drone.Classification = classification
+		}
+		if areaRadius, ok := msg.Data["area_radius_m"]; ok {
+			if r, err := strconv.Atoi(areaRadius); err == nil && r > 0 {
+				drone.AreaRadiusM = r
+			}
 		}
 	}
 }
