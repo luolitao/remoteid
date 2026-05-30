@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    container_name: remoteid-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - remoteid-data:/tmp
+    environment:
+      - TZ=Asia/Shanghai
+    network_mode: host  # 需要 host 模式访问 WiFi 网卡（wlan1）
+    # 如果不需要抓包，可注释 network_mode 并使用以下配置：
+    # ports:
+    #   - "8000:8000"
+    # cap_add:
+    #   - NET_ADMIN
+    #   - NET_RAW
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    container_name: remoteid-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  remoteid-data:
