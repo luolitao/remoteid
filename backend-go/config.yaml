@@ -1,0 +1,26 @@
+# config.yaml (2.4GHz 优化版)
+database:
+  path: "./remoteid.db"
+  max_connections: 3    # 树莓派 1GB 内存优化
+  cache_size: 256       # 降低缓存大小
+
+network:
+  interface: "wlan2"
+  channel: 6            # +++ 2.4GHz 信道 6 (2437 MHz) +++
+  monitor_mode: true
+  # 2.4GHz 专用设置
+  bandwidth: 20         # 20MHz 带宽
+  antenna_gain: 20      # 假设使用 2dBi 天线
+
+api:
+  port: "8000"
+  cors:
+    - "*"
+  # 2.4GHz 优化
+  beacon_interval: 1000  # Beacon 帧间隔 (ms)
+
+logging:
+  level: "debug"        # +++ 启用调试日志 +++
+  file: "./remoteid.log"
+
+debug: true             # +++ 启用调试模式 +++
