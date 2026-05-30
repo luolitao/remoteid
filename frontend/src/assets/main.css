@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================
+   Remote ID Monitor — Global Styles (Dark Themed Tactical Console)
+   Inspired by Phantom-Proof (Fantom Finder) design language
+   ========================================================================= */
+
+/* ---- CSS Variables (fallback when Tailwind classes aren't enough) ---- */
+:root {
+  --void:            #08090c;
+  --surface-1:       #0e1117;
+  --surface-2:       #131820;
+  --surface-3:       #181f29;
+  --hairline:        #1a2027;
+  --hairline-strong: #232b35;
+  --fg-hi:           #e8eef7;
+  --fg-mid:          #b3becf;
+  --fg-mute:         #687586;
+  --fg-dim:          #424c5a;
+  --accent:          #56a8ff;
+  --confirmed:       #19d27a;
+  --phantom:         #ff9633;
+  --deception:       #ff4d6d;
+  --suspect:         #fbcc4a;
+  --sans: -apple-system, system-ui, 'Inter', 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--void);
+  color: var(--fg-mid);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ---- Scrollbar Styling ---- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface-2);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hairline-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-dim);
+}
+
+/* ---- Leaflet Overrides for Dark Theme ---- */
+.leaflet-container {
+  background: var(--surface-1) !important;
+}
+.leaflet-control-zoom a {
+  background: var(--surface-2) !important;
+  color: var(--fg-mid) !important;
+  border-color: var(--hairline-strong) !important;
+}
+.leaflet-control-attribution {
+  background: rgba(14, 17, 23, 0.85) !important;
+  color: var(--fg-dim) !important;
+  font-size: 9px !important;
+}
+.leaflet-popup-content-wrapper {
+  background: var(--surface-2) !important;
+  color: var(--fg-mid) !important;
+  border: 1px solid var(--hairline-strong) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+}
+.leaflet-popup-tip {
+  background: var(--surface-2) !important;
+}
+.leaflet-popup-content {
+  font-family: var(--mono) !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  color: var(--fg-mid) !important;
+  margin: 10px 12px !important;
+}
+.leaflet-popup-content b, .leaflet-popup-content h3 {
+  color: var(--fg-hi) !important;
+}
+
+/* ---- Base element resets ---- */
+h1, h2, h3, h4 {
+  margin: 0;
+  color: var(--fg-hi);
+}
+button {
+  font-family: var(--sans);
+}
+
+/* ---- Utility classes ---- */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.status-dot.live {
+  background: var(--confirmed);
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+.status-dot.error {
+  background: var(--deception);
+  animation: none;
+}
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .4; }
+}
