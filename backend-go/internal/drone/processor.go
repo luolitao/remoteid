@@ -350,8 +350,8 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 		drone.UAType = msg.Data["ua_type"]
 		drone.IDType = msg.Data["id_type"]
 		drone.Standard = msg.Data["standard"]
-		// 中国标准合规检查 (ID Type = CAA Registration ID)
-		if msg.Data["id_type"] == "CAARegistrationID" {
+		// 中国标准合规检查
+		if msg.Data["id_type"] == "CAARegistrationID" || msg.Standard == "GB42590-2023" {
 			drone.ChinaCompliant = true
 		}
 	case "location":
@@ -365,12 +365,22 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 				drone.Longitude = f
 			}
 		}
-		if alt, ok := msg.Data["altitude"]; ok {
+		// 优先用 altitude_baro（气压高度），其次 altitude_geo，最后 altitude
+		if alt, ok := msg.Data["altitude_baro"]; ok {
 			if f, err := strconv.ParseFloat(alt, 64); err == nil {
 				drone.Altitude = f
 			}
-		} else if height, ok := msg.Data["height_m"]; ok {
-			// ASTM: 当 altitude 无效时，使用 height_m（离地高度）作为补充
+		} else if alt, ok := msg.Data["altitude_geo"]; ok {
+			if f, err := strconv.ParseFloat(alt, 64); err == nil {
+				drone.Altitude = f
+			}
+		} else if alt, ok := msg.Data["altitude"]; ok {
+			if f, err := strconv.ParseFloat(alt, 64); err == nil {
+				drone.Altitude = f
+			}
+		}
+		// 高度补充：height_m（离地高度）
+		if height, ok := msg.Data["height_m"]; ok && drone.Altitude == 0 {
 			if f, err := strconv.ParseFloat(height, 64); err == nil && f > 0 {
 				drone.Altitude = f
 			}

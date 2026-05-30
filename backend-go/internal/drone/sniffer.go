@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"remoteid/pkg/types"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type Sniffer struct {
 		probeRequests  int
 		probeResponses int
 		authFrames     int
+		actionFrames   int
 		otherMgmt      int
 		dronesDetected int
 		// 移除 simulatorCount
@@ -129,6 +131,7 @@ func (s *Sniffer) logStats() {
 	slog.Info("2.4GHz 抓包统计",
 		"total_packets", s.stats.totalPackets,
 		"beacon_frames", s.stats.beaconFrames,
+		"action_frames", s.stats.actionFrames,
 		"drones", s.stats.dronesDetected,
 		"normal_devices", s.stats.normalDevices)
 }
@@ -182,6 +185,9 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	case layers.Dot11TypeMgmtDeauthentication: // 0x30
 		isMgmtFrame = true
 		frameSubtype = 12 // Deauthentication 子类型
+	case layers.Dot11TypeMgmtAction: // 0xD0
+		isMgmtFrame = true
+		frameSubtype = 13 // Action 子类型（含 Public Action Frame -> NAN SDF）
 	default:
 		isMgmtFrame = false
 		frameSubtype = 0
@@ -201,6 +207,8 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 		s.stats.probeResponses++
 	case 11: // Authentication
 		s.stats.authFrames++
+	case 13: // Action (NAN SDF)
+		s.stats.actionFrames++
 	default:
 		s.stats.otherMgmt++
 	}
@@ -236,24 +244,31 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 		}
 	}
 
-	// 检查 Remote ID 特征（GB42590 + ASTM）
+	// 检查 Remote ID 特征（ASTM/ASD-STAN Beacon + GB42590 + NAN）
 	raw := packet.Data()
 
-	gbPositions := s.findGB42590Features(raw)
-	for _, pos := range gbPositions {
-		slog.Debug("发现 GB42590 特征", "mac", srcMAC, "position", pos,
-			"trailing_bytes", fmt.Sprintf("%x", raw[pos:pos+min(10, len(raw)-pos)]))
+	// 根据帧类型选择检测方式
+	var deviceType string
+	if frameSubtype == 13 {
+		// Action Frame: 检测 NAN SDF (Wi-Fi Alliance OUI: 50:6F:9A)
+		deviceType = s.classifyNANDevice(srcMAC, raw)
+	} else {
+		// Beacon: 检测 Vendor Specific IE (ASD-STAN OUI: FA:0B:BC + 0x0D)
+		deviceType = s.classifyDevice(srcMAC, raw, nil)
 	}
-
-	// 设备分类（双协议支持）
-	deviceType := s.classifyDevice(srcMAC, raw, gbPositions)
 
 	switch deviceType {
 	case "drone":
 		slog.Info("检测到真实无人机", "mac", srcMAC, "signal_dbm", signalStrength)
 		s.stats.dronesDetected++
 
-		messages, err := s.processor.parser.ParseFrame(raw)
+		var messages []types.DroneMessage
+		var err error
+		if frameSubtype == 13 {
+			messages, err = s.processor.parser.ParseNANFrame(raw)
+		} else {
+			messages, err = s.processor.parser.ParseFrame(raw)
+		}
 		if err != nil {
 			slog.Warn("无人机数据解析失败", "mac", srcMAC, "error", err)
 			return
@@ -275,40 +290,69 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	}
 }
 
-// classifyDevice 设备分类（ASTM + GB42590）
+// classifyDevice 设备分类（ASTM/ASD-STAN + GB42590）
+//
+// ASTM Beacon 和 GB42590 使用相同的 Vendor Specific IE：
+//
+//	OUI: FA:0B:BC (ASD-STAN), OUI_Type: 0x0D
+//
+// 通过消息内容区分：
+//   - 字节 0 高 4 位 = 0xF → Packed 格式 → GB42590-2023
+//   - 字节 0 高 4 位 = 2 → ASTM F3411-22a
+//   - 字节 0 高 4 位 = 0 或 1 → 通过 Basic ID 字段区分
 func (s *Sniffer) classifyDevice(mac string, raw []byte, gb []int) string {
-	if s.isValidGB42590Device(raw, gb) {
-		return "drone"
-	}
-	if s.isValidASTMDevice(raw) {
+	if s.isValidRemoteID(raw) {
 		return "drone"
 	}
 	return "normal"
 }
 
-// isValidGB42590Device 检查 GB42590 特征
-func (s *Sniffer) isValidGB42590Device(raw []byte, gb []int) bool {
-	for _, pos := range gb {
-		if s.isValidGB42590RemoteID(raw, pos) {
-			return true
-		}
-	}
-	return false
-}
-
-// isValidASTMDevice 检查 ASTM F3411-22a 特征
-// 通过 Wi-Fi NAN OUI (06:05:04) + Vendor Specific Attribute (0xFD) 识别，
-// 并验证消息类型 0-5 以确认是 ASTM Remote ID（而非其他 NAN 数据）
-func (s *Sniffer) isValidASTMDevice(raw []byte) bool {
-	// 搜索 Wi-Fi NAN OUI (06:05:04) 并验证 Vendor Type (0xFD)
+// isValidRemoteID 统一检查是否为 Remote ID 设备
+//
+// 搜索 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D) 的 Vendor Specific IE，
+// 验证消息格式有效性。
+//
+// GB42590 Beacon 格式: OUI + OUI_Type + [MsgCounter 1B] + Messages
+// ASTM Beacon 格式:   OUI + OUI_Type + Messages
+func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 	for i := 0; i < len(raw)-4; i++ {
-		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
-			// 检查 NAN Vendor Specific Attribute Type 0xFD
-			if i+4 < len(raw) && raw[i+4] == 0xFD {
-				msgType := (raw[i+3] >> 4) & 0x0F
-				// 只有 ASTM Remote ID 消息类型 (0-5) 才识别为无人机
-				if msgType <= 5 {
+		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
+			if i+4 < len(raw) && raw[i+3] == 0x0D {
+				payload := raw[i+4:]
+				if len(payload) < 1 {
+					continue
+				}
+
+				firstNibble := (payload[0] >> 4) & 0x0F
+				lowNibble := payload[0] & 0x0F
+
+				// GB42590 Packed 格式 (高4位 = 0xF, 低4位 = 0x1)
+				if firstNibble == 0xF {
 					return true
+				}
+
+				// ASTM: 高4位=协议版本(2), 低4位=消息类型(0-5)
+				if firstNibble == 2 && lowNibble <= 5 {
+					return true
+				}
+
+				// GB42590 单消息: 低4位=接口版本(0x1), 高4位=报文类型(0-5)
+				if lowNibble == 0x1 && firstNibble <= 5 {
+					return true
+				}
+
+				// GB42590: 可能有 Message Counter，检查下一字节
+				if len(payload) > 1 {
+					nextNibble := (payload[1] >> 4) & 0x0F
+					nextLow := payload[1] & 0x0F
+					// ASTM: 高4位=2, 低4位<=5
+					if nextNibble == 2 && nextLow <= 5 {
+						return true
+					}
+					// GB42590: 低4位=0x1, 高4位<=5
+					if nextLow == 0x1 && nextNibble <= 5 {
+						return true
+					}
 				}
 			}
 		}
@@ -316,29 +360,54 @@ func (s *Sniffer) isValidASTMDevice(raw []byte) bool {
 	return false
 }
 
-// findGB42590Features 查找 GB42590 特征位置
-func (s *Sniffer) findGB42590Features(data []byte) []int {
-	var positions []int
-	for i := 0; i < len(data)-3; i++ {
-		if data[i] == 0xFA && data[i+1] == 0x0B && data[i+2] == 0xBC {
-			positions = append(positions, i)
-		}
+// classifyNANDevice 检测 NAN (Wi-Fi Alliance OUI: 50:6F:9A) 的 Remote ID 设备
+//
+// NAN Service Discovery Frame 结构:
+//
+//	Action Frame (0x0D) -> Public Action Frame -> NAN Attributes
+//	OUI: 50:6F:9A (Wi-Fi Alliance), OUI_Type: 0x13 (NAN)
+//
+// 搜索 Wi-Fi Alliance OUI + NAN OUI_Type (0x13)，检测是否包含
+// Remote ID Service ID 或 ASD-STAN Vendor Specific 数据。
+func (s *Sniffer) classifyNANDevice(mac string, raw []byte) string {
+	if s.isValidNANRemoteID(raw) {
+		return "drone"
 	}
-	return positions
+	return "normal"
 }
 
-// isValidGB42590RemoteID 验证 GB42590 Remote ID 有效性
-func (s *Sniffer) isValidGB42590RemoteID(data []byte, pos int) bool {
-	if pos+10 > len(data) {
-		return false
+// isValidNANRemoteID 检查 Action Frame 中是否包含 NAN Remote ID 数据
+//
+// NAN SDF 中包含 Remote ID 的方式有两种：
+//  1. NAN Service Descriptor Attribute 中的 Service ID 为 Remote ID 特定值
+//  2. NAN Vendor Specific Attribute 中包含 ASD-STAN OUI (FA:0B:BC) 数据
+//
+// 这里搜索两个关键特征：
+//   - Wi-Fi Alliance OUI: 50:6F:9A (NAN 标识)
+//   - ASD-STAN OUI: FA:0B:BC + 0x0D (Remote ID 数据)
+func (s *Sniffer) isValidNANRemoteID(raw []byte) bool {
+	hasWiFiAlliance := false
+	hasRemoteID := false
+
+	for i := 0; i < len(raw)-3; i++ {
+		// 检测 Wi-Fi Alliance OUI (50:6F:9A) — NAN 标识
+		if raw[i] == 0x50 && raw[i+1] == 0x6F && raw[i+2] == 0x9A {
+			// NAN OUI_Type 通常是 0x13
+			if i+3 < len(raw) && raw[i+3] == 0x13 {
+				hasWiFiAlliance = true
+			}
+		}
+
+		// 检测 ASD-STAN OUI (FA:0B:BC) + 0x0D — Remote ID 数据
+		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
+			if i+3 < len(raw) && raw[i+3] == 0x0D {
+				hasRemoteID = true
+			}
+		}
 	}
 
-	// GB42590 Remote ID 通常紧跟 Vendor Type (0x0D)
-	if pos+3 < len(data) && data[pos+3] == 0x0D {
-		return true
-	}
-
-	return false
+	// NAN SDF 中的 Remote ID：需要同时有 NAN 标识和 Remote ID 数据
+	return hasWiFiAlliance && hasRemoteID
 }
 
 func (s *Sniffer) parseSSIDFromPayload(payload []byte) string {

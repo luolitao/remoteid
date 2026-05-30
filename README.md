@@ -1,6 +1,6 @@
 # Remote ID — 无人机远程识别监控系统
 
-基于 WiFi 抓包的无人机 Remote ID 监控系统，支持 **ASTM F3411-22a**（国际标准）和 **GB42590-2023**（中国国家标准 C-RID）双协议。部署于树莓派，通过 2.4GHz WiFi 监控模式实时捕获无人机 Beacon 帧中的身份和位置信息。
+基于 WiFi 抓包的无人机 Remote ID 监控系统，支持 **ASTM F3411-22a / ASD-STAN**（国际标准）和 **GB42590-2023**（中国国家标准 C-RID）双协议。部署于树莓派，通过 2.4GHz WiFi 监控模式实时捕获无人机 Beacon 帧中 Vendor Specific IE 的身份和位置信息。
 
 ## 功能特性
 
@@ -120,15 +120,27 @@ debug:
 
 ## 协议说明
 
-### ASTM F3411-22a
-- 通过 **Wi-Fi NAN (Neighbor Awareness Networking)** 承载
-- NAN OUI: `06:05:04`，Vendor Specific Attribute Type: `0xFD`
-- 消息类型：Basic ID / Location / Authentication / Self ID / System / Operator ID
+### ASTM F3411-22a / ASD-STAN prEN 4709-002
+
+ASTM/ASD-STAN 通过 **Vendor Specific IE** (IEEE 802.11 Element ID `0xDD`) 承载 Remote ID 数据：
+
+- **OUI**: `FA:0B:BC` (ASD-STAN)，**OUI_Type**: `0x0D`
+- 协议版本：`2`（字节 0 高 4 位）
+- 消息类型：Basic ID / Location / Authentication / Self ID / System / Operator ID（类型 0-5）
+- 编码特点：经纬度均为 4 字节 int32 little-endian，缩放因子 1e-7
+- 每条消息固定 25 字节（1 字节 header + 24 字节 payload）
+- Location 消息字段：Status(4bit) + Direction(1B) + SpeedH(1B) + SpeedV(1B) + Lat(4B LE) + Lon(4B LE) + AltBaro(2B LE) + AltGeo(2B LE) + Height(2B LE) + Accuracy(3B) + Timestamp(2B LE)
+
+> 注：ASTM Beacon 和 GB42590 使用相同的 Vendor IE OUI (`FA:0B:BC` + `0x0D`)，
+> 两者经纬度编码相同（4 字节 int32 LE），通过协议版本号（ASTM=2, GB42590=0/1）和消息字段布局差异区分标准。
 
 ### GB42590-2023 (C-RID)
-- OUI: `FA:0B:BC`
-- Vendor Type: `0x0D`
-- 支持 Packed 格式（`0xF1`）
+- **OUI**: `FA:0B:BC`，**Vendor Type**: `0x0D`
+- 支持 Packed 格式（`0xF1`，高 4 位 = 0xF 表示消息包）
+- Packed 头部：MessageCounter(1B) + MsgType|Proto(1B) + SingleMsgSize(1B) + MsgCount(1B)
+- 编码特点：经纬度均为 4 字节 int32 little-endian
+- Location 消息字段：Status(4bit) + Direction(12bit split) + SpeedH(1B) + SpeedV(1B) + Lat(4B LE) + Lon(4B LE) + Alt(2B LE)
+- Basic ID 字段：ID Type(3bit high) + UA Type(4bit low)，与 ASTM 的 nibble 分配相反
 
 ## 许可证
 
