@@ -55,16 +55,17 @@ func main() {
 	// 5. 创建处理器
 	processor := drone.NewProcessor(wsManager)
 
-	// 6. 启动抓包引擎
-	sniffer := drone.NewSniffer(*iface, processor)
+	// 6. 启动抓包引擎（开发环境中可能没有物理网卡，允许失败）
+	var sniffer *drone.Sniffer
+	sniffer = drone.NewSniffer(*iface, processor)
 	if err := sniffer.Start(); err != nil {
-		slog.Error("2.4GHz 抓包启动失败", "error", err)
-		os.Exit(1)
+		slog.Warn("2.4GHz 抓包启动失败，API 服务仍可运行（无实时数据）", "error", err)
+		sniffer = nil
+	} else {
+		defer sniffer.Stop()
+		slog.Info("2.4GHz 信道 6 监控已启动")
+		slog.Info("抓包引擎启动", "interface", *iface, "mode", "monitor")
 	}
-	defer sniffer.Stop()
-
-	slog.Info("2.4GHz 信道 6 监控已启动")
-	slog.Info("抓包引擎启动", "interface", *iface, "mode", "monitor")
 
 	// 7. 创建 API 服务器
 	server := api.NewServer(processor, wsManager)
@@ -92,7 +93,9 @@ func main() {
 		slog.Warn("服务器关闭错误", "error", err)
 	}
 
-	sniffer.Stop()
+	if sniffer != nil {
+		sniffer.Stop()
+	}
 	db.Close()
 	slog.Info("服务已安全关闭")
 }

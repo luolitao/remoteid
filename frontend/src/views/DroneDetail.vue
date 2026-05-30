@@ -47,6 +47,8 @@
                 <th class="text-right px-2 py-1 font-normal">Lat</th>
                 <th class="text-right px-2 py-1 font-normal">Lon</th>
                 <th class="text-right px-2 py-1 font-normal">Alt</th>
+                <th class="text-right px-2 py-1 font-normal">Spd</th>
+                <th class="text-right px-2 py-1 font-normal">Hdg</th>
               </tr>
             </thead>
             <tbody>
@@ -55,6 +57,8 @@
                 <td class="px-2 py-1 text-right font-mono">{{ formatCoord(pos.latitude) }}</td>
                 <td class="px-2 py-1 text-right font-mono">{{ formatCoord(pos.longitude) }}</td>
                 <td class="px-2 py-1 text-right font-mono">{{ pos.altitude ? pos.altitude.toFixed(1)+'m' : '-' }}</td>
+                <td class="px-2 py-1 text-right font-mono">{{ pos.speed ? pos.speed.toFixed(1) : '-' }}</td>
+                <td class="px-2 py-1 text-right font-mono">{{ pos.heading ? pos.heading.toFixed(0)+'°' : '-' }}</td>
               </tr>
             </tbody>
           </table>
@@ -69,11 +73,27 @@
           <div style="color: var(--TXTCOLOR1); font-weight: bold; margin-bottom: 4px;">System Info</div>
           <div>
             <div class="infoHeading">Standard:</div>
-            <div class="infoData">{{ drone?.standard || 'N/A' }}</div>
+            <div class="infoData" :style="{ color: drone?.standard ? '#38a169' : '#999' }">{{ drone?.standard || 'N/A' }}</div>
+          </div>
+          <div v-if="drone?.source">
+            <div class="infoHeading">Source:</div>
+            <div class="infoData">{{ drone.source }}</div>
           </div>
           <div>
-            <div class="infoHeading">Type:</div>
+            <div class="infoHeading">UA Type:</div>
             <div class="infoData">{{ drone?.ua_type || 'N/A' }}</div>
+          </div>
+          <div>
+            <div class="infoHeading">ID Type:</div>
+            <div class="infoData">{{ drone?.id_type || 'N/A' }}</div>
+          </div>
+          <div v-if="drone?.battery_level">
+            <div class="infoHeading">Battery:</div>
+            <div class="infoData">{{ drone.battery_level }}</div>
+          </div>
+          <div v-if="drone?.flight_time">
+            <div class="infoHeading">Flight Time:</div>
+            <div class="infoData">{{ drone.flight_time }}</div>
           </div>
           <div>
             <div class="infoHeading">Signal:</div>
@@ -104,6 +124,14 @@
             <div class="infoHeading">Altitude:</div>
             <div class="infoData font-mono">{{ drone?.altitude ? drone.altitude.toFixed(1)+' m' : 'N/A' }}</div>
           </div>
+          <div>
+            <div class="infoHeading">Speed:</div>
+            <div class="infoData font-mono">{{ drone?.speed ? drone.speed.toFixed(2)+' m/s' : 'N/A' }}</div>
+          </div>
+          <div>
+            <div class="infoHeading">Heading:</div>
+            <div class="infoData font-mono">{{ drone?.heading ? drone.heading.toFixed(1)+'°' : 'N/A' }}</div>
+          </div>
         </div>
 
         <!-- 操作员信息 -->
@@ -113,13 +141,50 @@
             <div class="infoHeading">Position:</div>
             <div class="infoData font-mono text-xs">{{ formatCoord(drone.operator_latitude) }}, {{ formatCoord(drone.operator_longitude) }}</div>
           </div>
+          <div v-if="drone.operator_latitude">
+            <div class="infoHeading">Op. Altitude:</div>
+            <div class="infoData font-mono">{{ drone.operator_altitude ? drone.operator_altitude.toFixed(1)+' m' : 'N/A' }}</div>
+          </div>
           <div v-if="drone.area_radius_m">
-            <div class="infoHeading">Radius:</div>
+            <div class="infoHeading">Area Radius:</div>
             <div class="infoData">{{ drone.area_radius_m }} m</div>
           </div>
           <div v-if="drone.classification_region">
             <div class="infoHeading">Region:</div>
             <div class="infoData">{{ drone.classification_region }}</div>
+          </div>
+        </div>
+
+        <!-- 飞行状态信息 -->
+        <div v-if="hasFlightStatus" class="infoBlockSection" style="border-bottom: 1px solid var(--BGCOLOR2);">
+          <div style="color: var(--TXTCOLOR1); font-weight: bold; margin-bottom: 4px;">Flight Status</div>
+          <div v-if="drone?.flight_status">
+            <div class="infoHeading">Status:</div>
+            <div class="infoData">{{ drone.flight_status }}</div>
+          </div>
+          <div v-if="drone?.height_type">
+            <div class="infoHeading">Height Type:</div>
+            <div class="infoData">{{ drone.height_type }}</div>
+          </div>
+          <div v-if="drone?.speed_v">
+            <div class="infoHeading">Vert Speed:</div>
+            <div class="infoData font-mono">{{ drone.speed_v }} m/s</div>
+          </div>
+          <div v-if="drone?.h_accuracy">
+            <div class="infoHeading">H Accuracy:</div>
+            <div class="infoData">{{ drone.h_accuracy }}</div>
+          </div>
+          <div v-if="drone?.v_accuracy">
+            <div class="infoHeading">V Accuracy:</div>
+            <div class="infoData">{{ drone.v_accuracy }}</div>
+          </div>
+          <div v-if="drone?.s_accuracy">
+            <div class="infoHeading">S Accuracy:</div>
+            <div class="infoData">{{ drone.s_accuracy }}</div>
+          </div>
+          <div v-if="drone?.timestamp">
+            <div class="infoHeading">Timestamp:</div>
+            <div class="infoData font-mono text-xs">{{ drone.timestamp }}</div>
           </div>
         </div>
 
@@ -142,7 +207,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -164,6 +229,12 @@ let droneMarker = null
 const drone = ref(null)
 const positionHistory = ref([])
 const alertHistory = ref([])
+
+// 飞行状态面板是否可见
+const hasFlightStatus = computed(() => {
+  const d = drone.value
+  return d && (d.flight_status || d.height_type || d.speed_v || d.h_accuracy || d.v_accuracy || d.s_accuracy || d.timestamp)
+})
 
 // ---- 初始化地图 ----
 const initMap = () => {

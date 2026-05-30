@@ -10,13 +10,22 @@ type DroneData struct {
 	UAType            string    `json:"ua_type"`
 	IDType            string    `json:"id_type"`
 	Standard          string    `json:"standard"`
+	Source            string    `json:"source"`
 	Latitude          float64   `json:"latitude"`
 	Longitude         float64   `json:"longitude"`
 	Altitude          float64   `json:"altitude"`
 	Speed             float64   `json:"speed"`
 	Heading           float64   `json:"heading"`
+	SpeedVertical     float64   `json:"speed_v"`
+	HeightType        string    `json:"height_type"`
+	FlightStatus      string    `json:"flight_status"`
+	HAccuracy         string    `json:"h_accuracy"`
+	VAccuracy         string    `json:"v_accuracy"`
+	SAccuracy         string    `json:"s_accuracy"`
+	LocationTimestamp string    `json:"timestamp"`
 	OperatorLatitude  float64   `json:"operator_latitude"`
 	OperatorLongitude float64   `json:"operator_longitude"`
+	OperatorAltitude  float64   `json:"operator_altitude"`
 	AreaRadiusM       int       `json:"area_radius_m"`
 	Classification    string    `json:"classification_region"`
 	ChinaCompliant    bool      `json:"china_compliant"`

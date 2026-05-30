@@ -349,7 +349,8 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 		drone.UASID = msg.Data["uas_id"]
 		drone.UAType = msg.Data["ua_type"]
 		drone.IDType = msg.Data["id_type"]
-		drone.Standard = msg.Data["standard"]
+		drone.Standard = msg.Standard
+		drone.Source = msg.Source
 		// 中国标准合规检查
 		if msg.Data["id_type"] == "CAARegistrationID" || msg.Standard == "GB42590-2023" {
 			drone.ChinaCompliant = true
@@ -395,6 +396,34 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 				drone.Heading = f
 			}
 		}
+		// 垂直速度
+		if speedV, ok := msg.Data["speed_v"]; ok {
+			if f, err := strconv.ParseFloat(speedV, 64); err == nil {
+				drone.SpeedVertical = f
+			}
+		}
+		// 飞行状态
+		if status, ok := msg.Data["status"]; ok {
+			drone.FlightStatus = status
+		}
+		// 高度类型
+		if ht, ok := msg.Data["height_type"]; ok {
+			drone.HeightType = ht
+		}
+		// 精度信息
+		if ha, ok := msg.Data["h_accuracy"]; ok {
+			drone.HAccuracy = ha
+		}
+		if va, ok := msg.Data["v_accuracy"]; ok {
+			drone.VAccuracy = va
+		}
+		if sa, ok := msg.Data["s_accuracy"]; ok {
+			drone.SAccuracy = sa
+		}
+		// 位置时间戳
+		if ts, ok := msg.Data["timestamp"]; ok {
+			drone.LocationTimestamp = ts
+		}
 		// 添加位置到轨迹
 		pos := &types.Position{
 			Latitude:  drone.Latitude,
@@ -420,6 +449,11 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 		if opLon, ok := msg.Data["operator_lon"]; ok {
 			if f, err := strconv.ParseFloat(opLon, 64); err == nil {
 				drone.OperatorLongitude = f
+			}
+		}
+		if opAlt, ok := msg.Data["operator_alt"]; ok {
+			if f, err := strconv.ParseFloat(opAlt, 64); err == nil {
+				drone.OperatorAltitude = f
 			}
 		}
 		if classification, ok := msg.Data["classification"]; ok {

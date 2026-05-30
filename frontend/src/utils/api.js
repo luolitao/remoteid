@@ -70,10 +70,17 @@ export const fetchAlerts = async (limit = 10) => {
  * @returns {WebSocket}
  */
 export const connectWebSocket = (callbacks = {}) => {
-  const apiUrl = import.meta.env.VITE_API_URL || ''
-  const wsUrl = apiUrl
-    .replace(/^http/, 'ws')
-    .replace(/\/api\/?$/, '')
+  const apiUrl = import.meta.env.VITE_API_URL
+  let wsUrl
+  if (apiUrl) {
+    wsUrl = apiUrl
+      .replace(/^http/, 'ws')
+      .replace(/\/api\/?$/, '')
+  } else {
+    // 开发模式下使用当前页面的 host（通过 Vite proxy）
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    wsUrl = `${protocol}//${window.location.host}`
+  }
 
   const ws = new WebSocket(`${wsUrl}/ws`)
 

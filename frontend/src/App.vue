@@ -90,7 +90,8 @@
         </div>
         <div class="infoBlockSection" style="padding-top:2px; padding-bottom:2px;">
           <div class="infoRow"><span class="infoHeading">Type:</span><span class="infoData">{{ selectedDrone.ua_type || 'N/A' }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Standard:</span><span class="infoData">{{ selectedDrone.standard || 'N/A' }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Standard:</span><span class="infoData" :style="{ color: selectedDrone.standard ? '#38a169' : '#999' }">{{ selectedDrone.standard || 'N/A' }}</span></div>
+          <div v-if="selectedDrone.source" class="infoRow"><span class="infoHeading">Via:</span><span class="infoData">{{ selectedDrone.source }}</span></div>
           <div class="infoRow">
             <span class="infoHeading">Compliance:</span>
             <span class="infoData" :style="{ color: selectedDrone.china_compliant ? '#38a169' : '#e53e3e' }">
@@ -101,10 +102,12 @@
         <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
           <div class="infoRow"><span class="infoHeading">Lat:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.latitude) }}</span></div>
           <div class="infoRow"><span class="infoHeading">Lon:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.longitude) }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Alt:</span><span class="infoData font-mono">{{ selectedDrone.altitude ? selectedDrone.altitude.toFixed(0) + ' m' : 'N/A' }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Speed:</span><span class="infoData font-mono">{{ selectedDrone.speed ? selectedDrone.speed.toFixed(1) + ' m/s' : 'N/A' }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Alt:</span><span class="infoData font-mono">{{ selectedDrone.altitude != null ? selectedDrone.altitude.toFixed(0) + ' m' : 'N/A' }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Speed:</span><span class="infoData font-mono">{{ selectedDrone.speed != null ? selectedDrone.speed.toFixed(1) + ' m/s' : 'N/A' }}</span></div>
           <div class="infoRow"><span class="infoHeading">Heading:</span><span class="infoData font-mono">{{ selectedDrone.heading != null ? selectedDrone.heading + '°' : 'N/A' }}</span></div>
-          <div v-if="selectedDrone.status" class="infoRow"><span class="infoHeading">Status:</span><span class="infoData">{{ selectedDrone.status }}</span></div>
+          <div v-if="selectedDrone.flight_status" class="infoRow"><span class="infoHeading">Flight:</span><span class="infoData">{{ selectedDrone.flight_status }}</span></div>
+          <div v-if="selectedDrone.height_type" class="infoRow"><span class="infoHeading">Height:</span><span class="infoData">{{ selectedDrone.height_type }}</span></div>
+          <div v-if="selectedDrone.speed_v != null" class="infoRow"><span class="infoHeading">V.Spd:</span><span class="infoData font-mono">{{ selectedDrone.speed_v }} m/s</span></div>
           <div class="infoRow"><span class="infoHeading">Signal:</span><span class="infoData">{{ selectedDrone.signal_strength || 'N/A' }}</span></div>
           <div v-if="selectedDrone.battery_level" class="infoRow"><span class="infoHeading">Battery:</span><span class="infoData">{{ selectedDrone.battery_level }}</span></div>
           <div v-if="selectedDrone.flight_time" class="infoRow"><span class="infoHeading">Flight:</span><span class="infoData">{{ selectedDrone.flight_time }}</span></div>
@@ -289,6 +292,7 @@
               >
                 <template v-if="col.key === 'ua_type'">{{ drone.ua_type || '?' }}</template>
                 <template v-else-if="col.key === 'standard'">{{ drone.standard || '-' }}</template>
+                <template v-else-if="col.key === 'source'">{{ drone.source || '-' }}</template>
                 <template v-else-if="col.key === 'altitude'">{{ drone.altitude != null ? Math.round(drone.altitude) + 'm' : '-' }}</template>
                 <template v-else-if="col.key === 'latitude'">{{ drone.latitude != null ? drone.latitude.toFixed(4) : '-' }}</template>
                 <template v-else-if="col.key === 'longitude'">{{ drone.longitude != null ? drone.longitude.toFixed(4) : '-' }}</template>
@@ -424,6 +428,7 @@ const showColumnPanel = ref(true)
 const availableColumns = [
   { key: 'ua_type', label: 'Type', align: 'left', size: 'var(--FS2)', default: true },
   { key: 'standard', label: 'Std', align: 'left', size: 'var(--FS2)', default: true },
+  { key: 'source', label: 'Via', align: 'left', size: '10px', default: false },
   { key: 'altitude', label: 'Alt', align: 'right', size: 'var(--FS2)', default: true },
   { key: 'latitude', label: 'Lat', align: 'right', size: 'var(--FS2)', default: true },
   { key: 'longitude', label: 'Lon', align: 'right', size: 'var(--FS2)', default: true },
@@ -655,6 +660,8 @@ const selectDrone = async (drone) => {
   try {
     const detail = await fetchDroneDetail(drone.mac)
     selectedDroneDetail.value = detail
+    // 将完整详情合并到 selectedDrone 中，使 info block 能显示所有字段
+    selectedDrone.value = { ...drone, ...detail }
   } catch (e) {
     logger.error('Fetch drone detail error:', e)
   }
