@@ -21,6 +21,7 @@ type Server struct {
 	httpSrv   *http.Server
 	processor *drone.Processor
 	wsManager *ws.Manager
+	sniffer   *drone.Sniffer // sniffer 引用，用于健康检查
 	config    *config.Config
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -52,7 +53,7 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
-func NewServer(processor *drone.Processor, wsManager *ws.Manager) *Server {
+func NewServer(processor *drone.Processor, wsManager *ws.Manager, sniffer *drone.Sniffer) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := gin.New()
@@ -88,6 +89,7 @@ func NewServer(processor *drone.Processor, wsManager *ws.Manager) *Server {
 		engine:    r,
 		processor: processor,
 		wsManager: wsManager,
+		sniffer:   sniffer,
 		config:    config.Get(), // 确保 config 已正确初始化
 		ctx:       ctx,
 		cancel:    cancel,

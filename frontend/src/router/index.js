@@ -6,6 +6,11 @@ const routes = [
     name: 'Home',
     component: () => import('../views/Home.vue')
   },
+  // nginx try_files 可能重定向到 /index.html，需要 redirect 回 /
+  {
+    path: '/index.html',
+    redirect: '/'
+  },
   {
     path: '/map',
     name: 'Map',

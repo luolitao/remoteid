@@ -8,6 +8,7 @@ import (
 	"os"
 	"remoteid/pkg/types"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -39,10 +40,13 @@ type Sniffer struct {
 		// 移除 simulatorCount
 		normalDevices int
 		lastLogTime   time.Time
+		lastPacket    time.Time // 最后一次收到数据包的时间
 	}
 
 	packetWriter *pcapgo.Writer
 	recordFile   *os.File
+
+	mu sync.Mutex // 保护 closed 和 handle 的并发访问
 }
 
 func NewSniffer(iface string, processor *Processor) *Sniffer {
@@ -53,7 +57,32 @@ func NewSniffer(iface string, processor *Processor) *Sniffer {
 }
 
 func (s *Sniffer) Start() error {
-	slog.Debug("使用已配置的监听模式接口", "iface", s.iface)
+	if err := s.openAndCapture(); err != nil {
+		return err
+	}
+
+	// 启动健康检查：每 10 秒检查一次是否有新数据，超过 60 秒无数据则重连
+	go s.healthCheckLoop()
+
+	slog.Info("2.4GHz 抓包引擎启动成功", "iface", s.iface)
+	return nil
+}
+
+// openAndCapture 打开网卡并启动抓包循环，失败时返回错误
+func (s *Sniffer) openAndCapture() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("sniffer 已关闭")
+	}
+	// 关闭旧 handle
+	if s.handle != nil {
+		s.handle.Close()
+		s.handle = nil
+	}
+	s.mu.Unlock()
+
+	slog.Debug("打开监听模式接口", "iface", s.iface)
 
 	handle, err := pcap.OpenLive(s.iface, 1024, true, 1*time.Second)
 	if err != nil {
@@ -62,15 +91,47 @@ func (s *Sniffer) Start() error {
 		}
 		return fmt.Errorf("设备打开失败: %w", err)
 	}
-	s.handle = handle
 
-	packetSource := gopacket.NewPacketSource(s.handle, s.handle.LinkType())
+	s.mu.Lock()
+	s.handle = handle
+	s.mu.Unlock()
+
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packetSource.NoCopy = true
 
 	go s.captureLoop(packetSource)
 
-	slog.Info("2.4GHz 抓包引擎启动成功", "iface", s.iface)
 	return nil
+}
+
+// healthCheckLoop 定期检查抓包是否仍在接收数据，超时则自动重连
+func (s *Sniffer) healthCheckLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mu.Lock()
+		closed := s.closed
+		lastPacket := s.stats.lastPacket
+		s.mu.Unlock()
+
+		if closed {
+			return
+		}
+
+		// 如果超过 60 秒没收到数据包，尝试重连
+		if !lastPacket.IsZero() && time.Since(lastPacket) > 60*time.Second {
+			slog.Warn("抓包超时未收到数据，尝试重连",
+				"last_packet", lastPacket.Format(time.RFC3339),
+				"since_seconds", time.Since(lastPacket).Seconds())
+
+			if err := s.openAndCapture(); err != nil {
+				slog.Error("抓包重连失败，将在下次检查时重试", "error", err)
+			} else {
+				slog.Info("抓包重连成功")
+			}
+		}
+	}
 }
 
 func (s *Sniffer) captureLoop(packetSource *gopacket.PacketSource) {
@@ -82,6 +143,7 @@ func (s *Sniffer) captureLoop(packetSource *gopacket.PacketSource) {
 		}
 
 		s.stats.totalPackets++
+		s.stats.lastPacket = time.Now()
 
 		if s.isBeaconFrame(packet) {
 			s.recordPacket(packet)
@@ -94,6 +156,8 @@ func (s *Sniffer) captureLoop(packetSource *gopacket.PacketSource) {
 			s.stats.lastLogTime = time.Now()
 		}
 	}
+
+	slog.Warn("抓包循环退出，channel 已关闭，等待健康检查重连")
 }
 
 func (s *Sniffer) isBeaconFrame(packet gopacket.Packet) bool {
@@ -503,7 +567,17 @@ func (s *Sniffer) extractSSIDFromDot11(packet gopacket.Packet) string {
 	return "Unknown"
 }
 
+// GetLastPacketTime 获取最后一次收到数据包的时间（用于健康检查）
+func (s *Sniffer) GetLastPacketTime() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stats.lastPacket
+}
+
 func (s *Sniffer) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.closed {
 		return
 	}
@@ -519,6 +593,7 @@ func (s *Sniffer) Stop() {
 
 	if s.handle != nil {
 		s.handle.Close()
+		s.handle = nil
 	}
 
 	s.closed = true

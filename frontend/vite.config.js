@@ -30,6 +30,19 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
         secure: false
+      },
+      // 高德地图瓦片代理，绕过浏览器的 HTTPS 连接限制
+      '/amap-vec': {
+        target: 'https://wprd01.is.autonavi.com',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/amap-vec/, '/appmaptile')
+      },
+      '/amap-img': {
+        target: 'https://webst01.is.autonavi.com',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/amap-img/, '/appmaptile')
       }
     }
   },

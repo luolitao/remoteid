@@ -13,13 +13,26 @@ import (
 )
 
 func (s *Server) registerRoutes() {
-	// 健康检查
+	// 健康检查（含 sniffer 状态）
 	s.engine.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+		health := gin.H{
 			"status":    "healthy",
 			"timestamp": time.Now().Format(time.RFC3339),
 			"version":   "1.0.0",
-		})
+		}
+
+		// 添加抓包状态信息
+		if s.sniffer != nil {
+			lastPacket := s.sniffer.GetLastPacketTime()
+			health["sniffer"] = gin.H{
+				"active":          !lastPacket.IsZero(),
+				"last_packet":     lastPacket.Format(time.RFC3339),
+				"seconds_since":   time.Since(lastPacket).Seconds(),
+				"stale":           !lastPacket.IsZero() && time.Since(lastPacket) > 60*time.Second,
+			}
+		}
+
+		c.JSON(http.StatusOK, health)
 	})
 
 	// API 路由组
@@ -72,6 +85,8 @@ func (s *Server) websocketHandler(c *gin.Context) {
 		"http://127.0.0.1:8080",
 		"http://192.168.6.30:8080",
 		"http://192.168.6.30",
+		"http://rpi5.lan",
+		"http://rpi5.local",
 	}
 
 	isAllowed := false

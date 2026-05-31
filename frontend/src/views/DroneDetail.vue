@@ -242,9 +242,13 @@ const initMap = () => {
   map = L.map(mapContainer.value, { zoomControl: false }).setView([23.14287, 113.26026], 12)
   L.control.zoom({ position: 'bottomright' }).addTo(map)
 
-  // OSM 底图
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap'
+  // 高德地图矢量底图（开发模式走 Vite proxy 代理）
+  const amapUrl = import.meta.env.DEV
+    ? '/amap-vec?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}'
+    : 'https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}'
+  L.tileLayer(amapUrl, {
+    subdomains: import.meta.env.DEV ? [] : ['01','02','03','04'],
+    attribution: '&copy; 高德地图'
   }).addTo(map)
 }
 

@@ -14,6 +14,9 @@ func (s *Server) listAlerts(c *gin.Context) {
 	limit := c.DefaultQuery("limit", "10")
 
 	alerts := s.processor.GetAlerts(limit)
+	if alerts == nil {
+		alerts = []*types.Alert{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"alerts": alerts,
@@ -96,6 +99,9 @@ func (s *Server) searchAlerts(c *gin.Context) {
 	query := c.Query("q")
 
 	results := s.processor.SearchAlerts(query)
+	if results == nil {
+		results = []*types.Alert{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"results": results,

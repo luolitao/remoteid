@@ -19,7 +19,8 @@ const apiClient = axios.create({
  */
 export const fetchActiveDrones = async () => {
   const response = await apiClient.get('/drones/')
-  return response.data.drones || response.data || []
+  const drones = response.data?.drones || response.data
+  return Array.isArray(drones) ? drones : []
 }
 
 /**

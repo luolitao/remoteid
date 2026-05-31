@@ -3,13 +3,17 @@ package api
 
 import (
 	"net/http"
+	"remoteid/pkg/types"
 
 	"github.com/gin-gonic/gin"
 )
 
 func (s *Server) listDrones(c *gin.Context) {
-	// 获取所有活动无人机
+	// 获取所有活动无人机，确保返回空数组而非 null
 	drones := s.processor.GetAllDrones()
+	if drones == nil {
+		drones = []*types.DroneData{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"drones": drones,
@@ -47,6 +51,11 @@ func (s *Server) getTrajectory(c *gin.Context) {
 		return
 	}
 
+	// 确保 Points 不为 nil
+	if trajectory.Points == nil {
+		trajectory.Points = []*types.Position{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"trajectory": trajectory,
 		"points":     len(trajectory.Points),
@@ -73,6 +82,9 @@ func (s *Server) searchDrones(c *gin.Context) {
 	query := c.Query("q")
 
 	results := s.processor.SearchDrones(query)
+	if results == nil {
+		results = []*types.DroneData{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"results": results,

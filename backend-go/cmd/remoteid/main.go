@@ -68,7 +68,7 @@ func main() {
 	}
 
 	// 7. 创建 API 服务器
-	server := api.NewServer(processor, wsManager)
+	server := api.NewServer(processor, wsManager, sniffer)
 
 	// 8. 启动服务器
 	serverAddr := ":" + config.Get().API.Port

@@ -188,13 +188,18 @@
       <!-- 侧边栏头部 -->
       <div id="sidebar_header">
         <div class="flex items-center gap-2">
-          <span class="status-dot live"></span>
+          <span class="status-dot" :class="dataStaleWarning ? 'error' : 'live'"></span>
           <span id="header_title">Remote ID</span>
         </div>
         <div class="flex items-center gap-1">
           <span id="header_count">{{ store.activeDrones.length }} drones</span>
           <button @click="sidebarOpen = false" class="text-white opacity-60 hover:opacity-100" title="Hide sidebar" style="font-size:14px; line-height:1;">✕</button>
         </div>
+      </div>
+
+      <!-- 数据过期警告条 -->
+      <div v-if="dataStaleWarning" style="background:#e53e3e; color:#fff; text-align:center; padding:4px; font-size:11px; flex-shrink:0;">
+        ⚠ 数据已超过 60 秒未更新 — 请检查后端抓包服务是否正常运行
       </div>
 
       <!-- 搜索栏 -->
@@ -373,12 +378,26 @@ const store = useDroneStore()
 // ---- 地图类型 ----
 const TDT_TOKEN = '66ad6f2f6216ab57401ed9907e94cd43'
 const mapTypeOptions = [
-  { key: 'osm', label: 'OSM' },
+  { key: 'amap', label: '高德' },
+  { key: 'amapImg', label: '高德卫星' },
   { key: 'tianditu', label: '天地图' },
-  { key: 'tiandituImg', label: '影像' }
+  { key: 'tiandituImg', label: '天地图影像' },
+  { key: 'osm', label: 'OSM' }
 ]
 
+// 统一走本地代理路径，由 Nginx/Vite 反向代理到高德 CDN，避免浏览器直连限制
 const mapTypes = {
+  amap: {
+    url: '/amap-vec?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+    subdomains: [],
+    attribution: '&copy; 高德地图'
+  },
+  amapImg: {
+    url: '/amap-img?style=6&x={x}&y={y}&z={z}',
+    subdomains: [],
+    attribution: '&copy; 高德地图',
+    annotationUrl: '/amap-img?style=8&x={x}&y={y}&z={z}'
+  },
   osm: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap'
@@ -411,7 +430,7 @@ const showInfoBlock = ref(false)
 const selectedDrone = ref(null)
 const selectedDroneDetail = ref(null)
 const selectedDroneTrajectory = ref([])
-const currentMapType = ref('osm')
+const currentMapType = ref('tianditu')
 
 const timelinePosition = ref(0)
 const isPlaying = ref(false)
@@ -423,6 +442,7 @@ const showNonCompliant = ref(true)
 const showStale = ref(true)
 const showAlertsPanel = ref(false)
 const showColumnPanel = ref(true)
+const dataStaleWarning = ref(false) // 数据超过 60 秒未更新时显示警告
 
 // ---- 列选择配置 ----
 const availableColumns = [
@@ -581,11 +601,16 @@ const updateMapLayer = () => {
     if (layer instanceof L.TileLayer) map.value.removeLayer(layer)
   })
   const config = mapTypes[currentMapType.value]
-  if (currentMapType.value === 'osm') {
-    L.tileLayer(config.url, { attribution: config.attribution }).addTo(map.value)
-  } else {
-    L.tileLayer(config.url, { subdomains: config.subdomains, attribution: config.attribution }).addTo(map.value)
-    L.tileLayer(config.annotationUrl, { subdomains: config.subdomains, attribution: config.attribution }).addTo(map.value)
+  L.tileLayer(config.url, {
+    subdomains: config.subdomains,
+    attribution: config.attribution
+  }).addTo(map.value)
+  // 有标注层时叠加（卫星图模式下）
+  if (config.annotationUrl) {
+    L.tileLayer(config.annotationUrl, {
+      subdomains: config.subdomains,
+      attribution: ''
+    }).addTo(map.value)
   }
 }
 
@@ -615,6 +640,7 @@ const createPopupContent = (drone, mac) => `
 
 const updateDroneMarkers = (drones) => {
   if (!map.value) return
+  if (!Array.isArray(drones)) return
   const activeMacs = new Set(drones.map(d => d.mac))
   Object.keys(droneMarkers.value).forEach(mac => {
     if (!activeMacs.has(mac)) {
@@ -809,8 +835,16 @@ const refreshData = async () => {
   try {
     const drones = await store.loadActiveDrones()
     store.cleanStaleDrones()
-    updateDroneMarkers(drones)
+    // 防御：确保 drones 是数组
+    const droneList = Array.isArray(drones) ? drones : []
+    updateDroneMarkers(droneList)
     await store.loadAlerts()
+
+    // 检查数据新鲜度：如果最近一架无人机超过 60 秒未更新，显示警告
+    if (droneList.length > 0) {
+      const latestSeen = Math.max(...droneList.map(d => new Date(d.last_seen).getTime()))
+      dataStaleWarning.value = (Date.now() - latestSeen) > 60000
+    }
   } catch (e) { logger.error('Refresh error:', e) }
 }
 
