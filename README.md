@@ -15,7 +15,7 @@
 
 ```
 remoteid/
-├── backend-go/          # Go 后端（主力）
+├── backend/            # Go 后端（主力）
 │   ├── cmd/remoteid/    # 入口
 │   ├── internal/        # 内部包（api/config/db/drone）
 │   ├── pkg/             # 公共库（types/ws）
@@ -52,7 +52,7 @@ remoteid/
 ### 后端启动
 
 ```bash
-cd backend-go
+cd backend
 cp config.yaml.example config.yaml  # 按需修改配置
 go run cmd/remoteid/main.go
 ```
@@ -60,7 +60,7 @@ go run cmd/remoteid/main.go
 或编译部署到树莓派：
 
 ```bash
-cd backend-go
+cd backend
 bash build.sh
 ```
 
@@ -80,7 +80,7 @@ docker-compose up -d
 
 ## 配置说明
 
-配置文件位于 `backend-go/config.yaml`：
+配置文件位于 `backend/config.yaml`：
 
 ```yaml
 database:

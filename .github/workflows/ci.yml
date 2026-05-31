@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend-go
+        working-directory: backend
 
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
-          working-directory: backend-go
+          working-directory: backend
           version: latest
           args: --timeout=5m
 
@@ -42,7 +42,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
-          path: backend-go/coverage.out
+          path: backend/coverage.out
 
   frontend:
     name: Vue Frontend

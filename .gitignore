@@ -64,4 +64,4 @@ paths.csv
 .env.*.local
 
 # --- Build artifacts ---
-backend-go/remoteid
+backend/remoteid
