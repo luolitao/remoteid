@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"remoteid/internal/config"
-	"remoteid/pkg/types"
+	"remoteid-monitor/internal/config"
+	"remoteid-monitor/pkg/types"
 
 	_ "github.com/mattn/go-sqlite3"
 )

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"remoteid/internal/config"
-	"remoteid/internal/drone"
-	"remoteid/pkg/ws"
+	"remoteid-monitor/internal/config"
+	"remoteid-monitor/internal/drone"
+	"remoteid-monitor/pkg/ws"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"

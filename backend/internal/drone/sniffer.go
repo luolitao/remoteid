@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"remoteid/pkg/types"
+	"remoteid-monitor/pkg/types"
 	"strings"
 	"sync"
 	"time"
@@ -374,12 +374,19 @@ func (s *Sniffer) classifyDevice(mac string, raw []byte, gb []int) string {
 // isValidRemoteID 统一检查是否为 Remote ID 设备
 //
 // 搜索 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D) 的 Vendor Specific IE，
+// 以及旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)，
 // 验证消息格式有效性。
 //
 // GB42590 Beacon 格式: OUI + OUI_Type + [MsgCounter 1B] + Messages
 // ASTM Beacon 格式:   OUI + OUI_Type + Messages
+//
+// 重要：GB42590 Packed 格式在 OUI+Type 后紧跟 Message Counter（1 字节），
+// 然后是 Packed 报头 (0xF1)。因此 payload[0] = Message Counter，
+// payload[1] = Packed 报头或单消息报头。
+// 不能用 payload[0] 来判断 Packed（0xF），因为那是 Message Counter 不是报头。
 func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 	for i := 0; i < len(raw)-4; i++ {
+		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
 		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
 			if i+4 < len(raw) && raw[i+3] == 0x0D {
 				payload := raw[i+4:]
@@ -387,36 +394,54 @@ func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 					continue
 				}
 
+				// 优先检查 payload[1]（跳过可能的 Message Counter）是否为 GB42590
+				// GB42590 Packed: payload[1] 高4位 = 0xF
+				// GB42590 单消息: payload[1] 低4位 = 0x1
+				if len(payload) > 1 {
+					nextNibble := (payload[1] >> 4) & 0x0F
+					nextLow := payload[1] & 0x0F
+					// GB42590 Packed 格式
+					if nextNibble == 0xF {
+						return true
+					}
+					// GB42590 单消息
+					if nextLow == 0x1 && nextNibble <= 5 {
+						return true
+					}
+				}
+
 				firstNibble := (payload[0] >> 4) & 0x0F
 				lowNibble := payload[0] & 0x0F
-
-				// GB42590 Packed 格式 (高4位 = 0xF, 低4位 = 0x1)
-				if firstNibble == 0xF {
-					return true
-				}
 
 				// ASTM: 高4位=协议版本(2), 低4位=消息类型(0-5)
 				if firstNibble == 2 && lowNibble <= 5 {
 					return true
 				}
 
-				// GB42590 单消息: 低4位=接口版本(0x1), 高4位=报文类型(0-5)
+				// GB42590 单消息（无 Message Counter 的情况，payload[0] 直接是报头）
 				if lowNibble == 0x1 && firstNibble <= 5 {
 					return true
 				}
 
-				// GB42590: 可能有 Message Counter，检查下一字节
-				if len(payload) > 1 {
-					nextNibble := (payload[1] >> 4) & 0x0F
-					nextLow := payload[1] & 0x0F
-					// ASTM: 高4位=2, 低4位<=5
-					if nextNibble == 2 && nextLow <= 5 {
-						return true
-					}
-					// GB42590: 低4位=0x1, 高4位<=5
-					if nextLow == 0x1 && nextNibble <= 5 {
-						return true
-					}
+				// 旧版格式
+				if firstNibble <= 5 {
+					return true
+				}
+			}
+		}
+
+		// 检查旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)
+		// 部分 ESP32 开源实现使用此 OUI
+		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
+			if i+4 < len(raw) && raw[i+3] == 0xFD {
+				payload := raw[i+4:]
+				if len(payload) < 1 {
+					continue
+				}
+				firstNibble := (payload[0] >> 4) & 0x0F
+				lowNibble := payload[0] & 0x0F
+				if firstNibble == 2 && lowNibble <= 5 {
+					return true
 				}
 			}
 		}

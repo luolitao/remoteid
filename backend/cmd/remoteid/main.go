@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"remoteid/internal/api"
-	"remoteid/internal/config"
-	"remoteid/internal/db"
-	"remoteid/internal/drone"
-	"remoteid/pkg/ws"
+	"remoteid-monitor/internal/api"
+	"remoteid-monitor/internal/config"
+	"remoteid-monitor/internal/db"
+	"remoteid-monitor/internal/drone"
+	"remoteid-monitor/pkg/ws"
 )
 
 func init() {

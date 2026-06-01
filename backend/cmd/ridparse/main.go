@@ -1,4 +1,4 @@
-// ridparse — Remote ID 数据解析命令行工具
+// ridparse — Remote ID Monitor 数据解析命令行工具
 //
 // 支持三种模式：
 //   1. 实时抓包:   ridparse -iface wlan1
@@ -26,8 +26,8 @@ import (
 	"syscall"
 	"time"
 
-	"remoteid/internal/drone"
-	"remoteid/pkg/types"
+	"remoteid-monitor/internal/drone"
+	"remoteid-monitor/pkg/types"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -72,7 +72,7 @@ func main() {
 	apiURL := flag.String("url", "http://127.0.0.1:8000", "后端 API 地址（TUI 模式使用）")
 	refresh := flag.Duration("refresh", 2*time.Second, "TUI 刷新间隔")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `ridparse — Remote ID (ASTM F3411 / GB42590) 数据解析工具
+		fmt.Fprintf(os.Stderr, `ridparse — Remote ID Monitor (ASTM F3411 / GB42590) 数据解析工具
 
 用法:
   ridparse -iface wlan1                     实时抓包并解析
@@ -303,7 +303,7 @@ func renderTUI(drones []*types.DroneData, wsConnected bool, apiURL string) {
 	div := colorCyan + strings.Repeat("─", 62) + colorReset
 
 	fmt.Println(sep)
-	fmt.Println(colorCyan + "  📡 Remote ID 监控 v" + version + "  |  后端: " + apiURL + "  |  WS: " + wsStatus + "  |  运行: " + elapsed.Round(time.Second).String() + colorReset)
+	fmt.Println(colorCyan + "  📡 Remote ID Monitor v" + version + "  |  后端: " + apiURL + "  |  WS: " + wsStatus + "  |  运行: " + elapsed.Round(time.Second).String() + colorReset)
 	fmt.Println(div)
 
 	if len(drones) == 0 {
@@ -552,32 +552,59 @@ func getMgmtSubtype(t layers.Dot11Type) uint8 {
 
 func isValidRemoteID(raw []byte) bool {
 	for i := 0; i < len(raw)-4; i++ {
+		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
 		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
 			if i+4 < len(raw) && raw[i+3] == 0x0D {
 				payload := raw[i+4:]
 				if len(payload) < 1 {
 					continue
 				}
-				firstNibble := (payload[0] >> 4) & 0x0F
-				lowNibble := payload[0] & 0x0F
-				if firstNibble == 0xF {
-					return true
-				}
-				if firstNibble == 2 && lowNibble <= 5 {
-					return true
-				}
-				if lowNibble == 0x1 && firstNibble <= 5 {
-					return true
-				}
+
+				// 优先检查 payload[1]（跳过可能的 Message Counter）是否为 GB42590
 				if len(payload) > 1 {
 					nextNibble := (payload[1] >> 4) & 0x0F
 					nextLow := payload[1] & 0x0F
-					if nextNibble == 2 && nextLow <= 5 {
+					// GB42590 Packed 格式
+					if nextNibble == 0xF {
 						return true
 					}
+					// GB42590 单消息
 					if nextLow == 0x1 && nextNibble <= 5 {
 						return true
 					}
+				}
+
+				firstNibble := (payload[0] >> 4) & 0x0F
+				lowNibble := payload[0] & 0x0F
+
+				// ASTM: 高4位=协议版本(2), 低4位=消息类型(0-5)
+				if firstNibble == 2 && lowNibble <= 5 {
+					return true
+				}
+
+				// GB42590 单消息（无 Message Counter）
+				if lowNibble == 0x1 && firstNibble <= 5 {
+					return true
+				}
+
+				// 旧版格式
+				if firstNibble <= 5 {
+					return true
+				}
+			}
+		}
+
+		// 检查旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)
+		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
+			if i+4 < len(raw) && raw[i+3] == 0xFD {
+				payload := raw[i+4:]
+				if len(payload) < 1 {
+					continue
+				}
+				firstNibble := (payload[0] >> 4) & 0x0F
+				lowNibble := payload[0] & 0x0F
+				if firstNibble == 2 && lowNibble <= 5 {
+					return true
 				}
 			}
 		}

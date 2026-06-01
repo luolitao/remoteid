@@ -5,9 +5,9 @@ package drone
 import (
 	"fmt"
 	"log/slog"
-	"remoteid/internal/db"
-	"remoteid/pkg/types"
-	"remoteid/pkg/ws"
+	"remoteid-monitor/internal/db"
+	"remoteid-monitor/pkg/types"
+	"remoteid-monitor/pkg/ws"
 	"sort"
 	"strconv"
 	"strings"

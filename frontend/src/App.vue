@@ -5,7 +5,7 @@
     <div id="map_container" v-show="mapOpen">
       <div id="map_canvas" ref="mapContainer"></div>
 
-      <!-- 左上角按钮组 -->
+      <!-- 右上角按钮组 -->
       <div id="header_side">
         <!-- 地图隐藏 -->
         <button
@@ -71,60 +71,7 @@
             <label class="settingsCheckboxLabel" @click="mapOpen = !mapOpen">
               <input type="checkbox" :checked="mapOpen" class="mr-1" style="width:12px;height:12px;" /> Map
             </label>
-            <label class="settingsCheckboxLabel" style="cursor:pointer;" @click="showColumnPanel = !showColumnPanel">
-              <input type="checkbox" :checked="showColumnPanel" class="mr-1" style="width:12px;height:12px;" /> Column Selector
-            </label>
           </div>
-        </div>
-      </div>
-
-      <!-- ========== 选中无人机信息块 ========== -->
-      <div
-        v-if="showInfoBlock && selectedDrone"
-        id="selected_infoblock"
-      >
-        <div id="infoblock_close" @click="closeInfoBlock">✕</div>
-        <div class="infoBlockSection" style="padding-bottom:2px;">
-          <div class="identLarge">{{ selectedDrone.uas_id || 'Unknown' }}</div>
-          <div class="font-mono uppercase" style="font-size:10px; color: var(--TXTCOLOR2); opacity:0.7;">{{ selectedDrone.mac }}</div>
-        </div>
-        <div class="infoBlockSection" style="padding-top:2px; padding-bottom:2px;">
-          <div class="infoRow"><span class="infoHeading">Type:</span><span class="infoData">{{ selectedDrone.ua_type || 'N/A' }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Standard:</span><span class="infoData" :style="{ color: selectedDrone.standard ? '#38a169' : '#999' }">{{ selectedDrone.standard || 'N/A' }}</span></div>
-          <div v-if="selectedDrone.source" class="infoRow"><span class="infoHeading">Via:</span><span class="infoData">{{ selectedDrone.source }}</span></div>
-          <div class="infoRow">
-            <span class="infoHeading">Compliance:</span>
-            <span class="infoData" :style="{ color: selectedDrone.china_compliant ? '#38a169' : '#e53e3e' }">
-              {{ selectedDrone.china_compliant ? 'CAA Compliant' : 'Non-compliant' }}
-            </span>
-          </div>
-        </div>
-        <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
-          <div class="infoRow"><span class="infoHeading">Lat:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.latitude) }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Lon:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.longitude) }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Alt:</span><span class="infoData font-mono">{{ selectedDrone.altitude != null ? selectedDrone.altitude.toFixed(0) + ' m' : 'N/A' }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Speed:</span><span class="infoData font-mono">{{ selectedDrone.speed != null ? selectedDrone.speed.toFixed(1) + ' m/s' : 'N/A' }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Heading:</span><span class="infoData font-mono">{{ selectedDrone.heading != null ? selectedDrone.heading + '°' : 'N/A' }}</span></div>
-          <div v-if="selectedDrone.flight_status" class="infoRow"><span class="infoHeading">Flight:</span><span class="infoData">{{ selectedDrone.flight_status }}</span></div>
-          <div v-if="selectedDrone.height_type" class="infoRow"><span class="infoHeading">Height:</span><span class="infoData">{{ selectedDrone.height_type }}</span></div>
-          <div v-if="selectedDrone.speed_v != null" class="infoRow"><span class="infoHeading">V.Spd:</span><span class="infoData font-mono">{{ selectedDrone.speed_v }} m/s</span></div>
-          <div class="infoRow"><span class="infoHeading">Signal:</span><span class="infoData">{{ selectedDrone.signal_strength || 'N/A' }}</span></div>
-          <div v-if="selectedDrone.battery_level" class="infoRow"><span class="infoHeading">Battery:</span><span class="infoData">{{ selectedDrone.battery_level }}</span></div>
-          <div v-if="selectedDrone.flight_time" class="infoRow"><span class="infoHeading">Flight:</span><span class="infoData">{{ selectedDrone.flight_time }}</span></div>
-        </div>
-        <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
-          <div class="infoRow"><span class="infoHeading">First:</span><span class="infoData">{{ formatTime(selectedDrone.first_seen) }}</span></div>
-          <div class="infoRow"><span class="infoHeading">Last:</span><span class="infoData">{{ timeAgo(selectedDrone.last_seen) }}</span></div>
-        </div>
-        <div v-if="selectedDrone.operator_latitude" class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
-          <div style="font-weight:bold; font-size:11px; margin-bottom:2px; color:var(--TXTCOLOR1);">Operator</div>
-          <div class="infoRow"><span class="infoHeading">Pos:</span><span class="infoData font-mono" style="font-size:10px;">{{ formatCoord(selectedDrone.operator_latitude) }}, {{ formatCoord(selectedDrone.operator_longitude) }}</span></div>
-          <div v-if="selectedDrone.area_radius_m" class="infoRow"><span class="infoHeading">Radius:</span><span class="infoData">{{ selectedDrone.area_radius_m }} m</span></div>
-          <div v-if="selectedDrone.classification_region" class="infoRow"><span class="infoHeading">Region:</span><span class="infoData">{{ selectedDrone.classification_region }}</span></div>
-        </div>
-        <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2);">
-          <button @click="goToDetail" class="sidebarButton w-full mb-1" style="font-size:11px;">View Full Details</button>
-          <button @click="exportDroneData" class="sidebarButton w-full" style="font-size:11px;">Export CSV</button>
         </div>
       </div>
 
@@ -212,56 +159,6 @@
         />
       </div>
 
-      <!-- 过滤 + 列选择栏（侧边栏内） -->
-      <div id="sidebar_controls">
-        <div class="flex items-center justify-between">
-          <span class="controls-label">Filters / Columns</span>
-          <button
-            @click="showColumnPanel = !showColumnPanel"
-            class="text-xs"
-            style="color: var(--ACCENT); cursor: pointer;"
-          >{{ showColumnPanel ? '▲ hide' : '▼ show' }}</button>
-        </div>
-
-        <!-- 展开的列选择 + 过滤器面板 -->
-        <div v-if="showColumnPanel" id="sidebar_column_panel">
-          <!-- 过滤器行 -->
-          <div class="filter-row">
-            <span class="filter-section-title">Filters:</span>
-            <label class="filter-chip" :class="{ active: showCompliant }">
-              <input type="checkbox" v-model="showCompliant" class="sr-only" />
-              Compliant
-            </label>
-            <label class="filter-chip" :class="{ active: showNonCompliant }">
-              <input type="checkbox" v-model="showNonCompliant" class="sr-only" />
-              Non-compliant
-            </label>
-            <label class="filter-chip" :class="{ active: showStale }">
-              <input type="checkbox" v-model="showStale" class="sr-only" />
-              Stale
-            </label>
-          </div>
-
-          <!-- 列选择 -->
-          <div class="columns-grid">
-            <label
-              v-for="col in availableColumns"
-              :key="col.key"
-              class="column-chip"
-              :class="{ active: visibleColumns[col.key] }"
-            >
-              <input
-                type="checkbox"
-                :checked="visibleColumns[col.key]"
-                @change="toggleColumn(col.key)"
-                class="sr-only"
-              />
-              {{ col.label }}
-            </label>
-          </div>
-        </div>
-      </div>
-
       <!-- 无人机表格 -->
       <div id="sidebar_canvas">
         <table id="planesTable">
@@ -323,6 +220,58 @@
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- 选中无人机详情（侧边栏内，表格下方） -->
+      <div
+        v-if="showInfoBlock && selectedDrone"
+        id="sidebar_drone_detail"
+      >
+        <div class="flex items-center justify-between px-2 py-1 text-xs font-bold text-white" style="background-color: var(--ACCENT);">
+          <span>{{ selectedDrone.uas_id || 'Unknown' }}</span>
+          <button @click="closeInfoBlock" class="text-white text-xs">✕</button>
+        </div>
+        <div class="infoBlockSection" style="padding-bottom:2px;">
+          <div class="font-mono uppercase" style="font-size:10px; color: var(--TXTCOLOR2); opacity:0.7;">{{ selectedDrone.mac }}</div>
+        </div>
+        <div class="infoBlockSection" style="padding-top:2px; padding-bottom:2px;">
+          <div class="infoRow"><span class="infoHeading">Type:</span><span class="infoData">{{ selectedDrone.ua_type || 'N/A' }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Standard:</span><span class="infoData" :style="{ color: selectedDrone.standard ? '#38a169' : '#999' }">{{ selectedDrone.standard || 'N/A' }}</span></div>
+          <div v-if="selectedDrone.source" class="infoRow"><span class="infoHeading">Via:</span><span class="infoData">{{ selectedDrone.source }}</span></div>
+          <div class="infoRow">
+            <span class="infoHeading">Compliance:</span>
+            <span class="infoData" :style="{ color: selectedDrone.china_compliant ? '#38a169' : '#e53e3e' }">
+              {{ selectedDrone.china_compliant ? 'CAA Compliant' : 'Non-compliant' }}
+            </span>
+          </div>
+        </div>
+        <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
+          <div class="infoRow"><span class="infoHeading">Lat:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.latitude) }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Lon:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.longitude) }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Alt:</span><span class="infoData font-mono">{{ selectedDrone.altitude != null ? selectedDrone.altitude.toFixed(0) + ' m' : 'N/A' }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Speed:</span><span class="infoData font-mono">{{ selectedDrone.speed != null ? selectedDrone.speed.toFixed(1) + ' m/s' : 'N/A' }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Heading:</span><span class="infoData font-mono">{{ selectedDrone.heading != null ? selectedDrone.heading + '°' : 'N/A' }}</span></div>
+          <div v-if="selectedDrone.flight_status" class="infoRow"><span class="infoHeading">Flight:</span><span class="infoData">{{ selectedDrone.flight_status }}</span></div>
+          <div v-if="selectedDrone.height_type" class="infoRow"><span class="infoHeading">Height:</span><span class="infoData">{{ selectedDrone.height_type }}</span></div>
+          <div v-if="selectedDrone.speed_v != null" class="infoRow"><span class="infoHeading">V.Spd:</span><span class="infoData font-mono">{{ selectedDrone.speed_v }} m/s</span></div>
+          <div class="infoRow"><span class="infoHeading">Signal:</span><span class="infoData">{{ selectedDrone.signal_strength || 'N/A' }}</span></div>
+          <div v-if="selectedDrone.battery_level" class="infoRow"><span class="infoHeading">Battery:</span><span class="infoData">{{ selectedDrone.battery_level }}</span></div>
+          <div v-if="selectedDrone.flight_time" class="infoRow"><span class="infoHeading">Flight:</span><span class="infoData">{{ selectedDrone.flight_time }}</span></div>
+        </div>
+        <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
+          <div class="infoRow"><span class="infoHeading">First:</span><span class="infoData">{{ formatTime(selectedDrone.first_seen) }}</span></div>
+          <div class="infoRow"><span class="infoHeading">Last:</span><span class="infoData">{{ timeAgo(selectedDrone.last_seen) }}</span></div>
+        </div>
+        <div v-if="selectedDrone.operator_latitude" class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
+          <div style="font-weight:bold; font-size:11px; margin-bottom:2px; color:var(--TXTCOLOR1);">Operator</div>
+          <div class="infoRow"><span class="infoHeading">Pos:</span><span class="infoData font-mono" style="font-size:10px;">{{ formatCoord(selectedDrone.operator_latitude) }}, {{ formatCoord(selectedDrone.operator_longitude) }}</span></div>
+          <div v-if="selectedDrone.area_radius_m" class="infoRow"><span class="infoHeading">Radius:</span><span class="infoData">{{ selectedDrone.area_radius_m }} m</span></div>
+          <div v-if="selectedDrone.classification_region" class="infoRow"><span class="infoHeading">Region:</span><span class="infoData">{{ selectedDrone.classification_region }}</span></div>
+        </div>
+        <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2);">
+          <button @click="goToDetail" class="sidebarButton w-full mb-1" style="font-size:11px;">View Full Details</button>
+          <button @click="exportDroneData" class="sidebarButton w-full" style="font-size:11px;">Export CSV</button>
+        </div>
       </div>
 
       <!-- 侧边栏底部 -->
@@ -437,11 +386,7 @@ const isPlaying = ref(false)
 
 const searchQuery = ref('')
 const showSettings = ref(false)
-const showCompliant = ref(true)
-const showNonCompliant = ref(true)
-const showStale = ref(true)
 const showAlertsPanel = ref(false)
-const showColumnPanel = ref(true)
 const dataStaleWarning = ref(false) // 数据超过 60 秒未更新时显示警告
 
 // ---- 列选择配置 ----
@@ -473,10 +418,6 @@ const visibleColumnList = computed(() =>
   availableColumns.filter(c => visibleColumns.value[c.key])
 )
 
-const toggleColumn = (key) => {
-  visibleColumns.value[key] = !visibleColumns.value[key]
-}
-
 let ws = null
 let pollInterval = null
 let playbackInterval = null
@@ -492,16 +433,6 @@ const filteredDrones = computed(() => {
       (d.mac || '').toLowerCase().includes(q) ||
       (d.ua_type || '').toLowerCase().includes(q)
     )
-  }
-
-  if (!showStale.value) {
-    drones = drones.filter(d => isRecent(d.last_seen, 30))
-  }
-  if (!showCompliant.value) {
-    drones = drones.filter(d => !d.china_compliant)
-  }
-  if (!showNonCompliant.value) {
-    drones = drones.filter(d => d.china_compliant !== false)
   }
 
   return drones
@@ -585,7 +516,7 @@ const initMap = () => {
   map.value = L.map(mapContainer.value, {
     zoomControl: false,
     attributionControl: true,
-  }).setView([23.14287, 113.26026], 10)
+  }).setView([23.14287, 113.26026], 18)
 
   L.control.zoom({ position: 'bottomright' }).addTo(map.value)
   updateMapLayer()
@@ -939,87 +870,12 @@ onUnmounted(() => {
   outline: none;
 }
 
-/* 侧边栏内 过滤+列选择栏 */
-#sidebar_controls {
-  flex-shrink: 0;
-  padding: 4px 6px;
-  background: var(--BGCOLOR1);
-  border-bottom: 1px solid var(--BGCOLOR2);
-}
-
-.controls-label {
-  font-size: var(--FS1);
-  color: var(--TXTCOLOR2);
-  font-weight: 600;
-}
-
-#sidebar_column_panel {
-  margin-top: 4px;
-}
-
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-
-.filter-section-title {
-  font-size: 10px;
-  color: var(--TXTCOLOR2);
-  margin-right: 2px;
-}
-
-.filter-chip,
-.column-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  font-size: 10px;
-  border-radius: 3px;
-  border: 1px solid var(--BGCOLOR2);
-  background: #fff;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  transition: all 0.1s;
-}
-
-.filter-chip:hover,
-.column-chip:hover {
-  border-color: var(--ACCENT);
-}
-
-.filter-chip.active,
-.column-chip.active {
-  background: var(--ACCENT);
-  color: #fff;
-  border-color: var(--ACCENT);
-}
-
-.columns-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0,0,0,0);
-  border: 0;
-}
-
 /* 侧边栏表格区域 */
 #sidebar_canvas {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   overflow-y: auto;
   overflow-x: auto;
+  min-height: 0;
 }
 
 #planesTable {
@@ -1101,11 +957,11 @@ onUnmounted(() => {
   width: 100% !important;
 }
 
-/* ---- 左上角按钮组 ---- */
+/* ---- 右上角按钮组 ---- */
 #header_side {
   position: absolute;
   top: 6px;
-  left: 6px;
+  right: 6px;
   z-index: 999;
   display: flex;
   align-items: center;
@@ -1185,38 +1041,17 @@ onUnmounted(() => {
   margin: 0;
 }
 
-/* ---- 选中信息块 (tar1090 #selected_infoblock) ---- */
-#selected_infoblock {
-  position: absolute;
-  bottom: 36px;
-  left: 6px;
-  z-index: 999;
-  max-height: 55vh;
+/* ---- 侧边栏内无人机详情 ---- */
+#sidebar_drone_detail {
+  flex-shrink: 0;
+  max-height: 45vh;
   overflow-y: auto;
+  border-top: 1px solid var(--BGCOLOR2);
   background: var(--BGCOLOR1);
-  border: 1px solid var(--BGCOLOR2);
-  border-radius: 2px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.15);
-  width: 200px;
   font-size: var(--FS2);
 }
 
-#infoblock_close {
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  color: var(--TXTCOLOR2);
-  z-index: 1;
-}
-
-#infoblock_close:hover {
-  color: #e53e3e;
-}
-
-/* ---- credits ---- */
+/* ---- infoBlockSection row clearfix ---- */
 #credits {
   position: absolute;
   bottom: 4px;

@@ -3,7 +3,7 @@ package api
 
 import (
 	"net/http"
-	"remoteid/pkg/types"
+	"remoteid-monitor/pkg/types"
 
 	"github.com/gin-gonic/gin"
 )

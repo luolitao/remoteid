@@ -1,4 +1,4 @@
-# Remote ID — 无人机远程识别监控系统
+# Remote ID Monitor — 无人机远程识别监控系统
 
 基于 WiFi 抓包的无人机 Remote ID 监控系统，支持 **ASTM F3411-22a / ASD-STAN**（国际标准）和 **GB42590-2023**（中国国家标准 C-RID）双协议。部署于树莓派，通过 2.4GHz WiFi 监控模式实时捕获无人机 Beacon 帧中 Vendor Specific IE 的身份和位置信息。
 
@@ -16,7 +16,7 @@
 ## 项目结构
 
 ```
-remoteid/
+remoteid-monitor/
 ├── backend/                # Go 后端
 │   ├── cmd/
 │   │   ├── remoteid/       # 后端服务入口（API + 抓包）
@@ -59,7 +59,7 @@ remoteid/
 ```bash
 cd backend
 cp config.yaml.example config.yaml  # 按需修改配置
-go run cmd/remoteid/main.go
+go run ./cmd/remoteid/
 ```
 
 ### 前端启动
@@ -100,7 +100,7 @@ cd backend
 ./deploy.sh rpi5.lan    # 部署到 rpi5
 ```
 
-脚本自动完成：rsync 源码 → SSH 远程 `go build` → 停服 → 部署到 `/opt/remoteid/` → 启服。首次部署自动创建 systemd 服务。
+脚本自动完成：rsync 源码 → SSH 远程 `go build` → 停服 → 部署到 `/opt/remoteid-monitor/` → 启服。首次部署自动创建 systemd 服务。
 
 **前置条件**：树莓派需安装 `golang` 和 `libpcap-dev`。
 
@@ -116,7 +116,7 @@ docker-compose up -d
 
 ```yaml
 database:
-  path: /data/remoteid.db
+  path: /data/remoteid-monitor.db
 network:
   interface: wlan2         # WiFi 监控接口
   channel: 6               # 监听信道（1-165）
@@ -131,10 +131,10 @@ debug:
 ```
 
 支持环境变量覆盖：
-- `REMOTEID_DB_PATH` — 数据库路径
-- `REMOTEID_IFACE` — 网络接口
-- `REMOTEID_PORT` — API 端口
-- `REMOTEID_DEBUG` — 调试模式
+- `REMOTEID_MONITOR_DB_PATH` — 数据库路径
+- `REMOTEID_MONITOR_IFACE` — 网络接口
+- `REMOTEID_MONITOR_PORT` — API 端口
+- `REMOTEID_MONITOR_DEBUG` — 调试模式
 
 ## API 概览
 

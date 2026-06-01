@@ -4,7 +4,7 @@ package ws
 import (
 	"encoding/json"
 	"log/slog"
-	"remoteid/pkg/types"
+	"remoteid-monitor/pkg/types"
 	"time"
 )
 

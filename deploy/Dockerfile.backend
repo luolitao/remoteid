@@ -1,4 +1,4 @@
-# Remote ID Go 后端 Dockerfile
+# Remote ID Monitor Go 后端 Dockerfile
 # 多阶段构建，优化镜像大小
 FROM golang:1.25-alpine AS builder
 
@@ -9,7 +9,7 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend/ ./
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /remoteid ./cmd/remoteid/
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /remoteid-monitor ./cmd/remoteid/
 
 # 运行阶段
 FROM alpine:3.20
@@ -18,9 +18,9 @@ RUN apk add --no-cache libpcap ca-certificates tzdata && \
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 WORKDIR /app
-COPY --from=builder /remoteid .
+COPY --from=builder /remoteid-monitor .
 COPY backend/config.yaml ./config.yaml
 
 EXPOSE 8000
 
-ENTRYPOINT ["./remoteid", "-config", "config.yaml"]
+ENTRYPOINT ["./remoteid-monitor", "-config", "config.yaml"]

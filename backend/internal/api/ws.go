@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"remoteid/pkg/types"
+	"remoteid-monitor/pkg/types"
 )
 
 // broadcastDroneUpdate 广播无人机更新

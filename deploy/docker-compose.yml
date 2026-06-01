@@ -5,12 +5,12 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.backend
-    container_name: remoteid-backend
+    container_name: remoteid-monitor-backend
     restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
-      - remoteid-data:/tmp
+      - remoteid-monitor-data:/tmp
     environment:
       - TZ=Asia/Shanghai
     network_mode: host  # 需要 host 模式访问 WiFi 网卡（wlan1）
@@ -25,7 +25,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
-    container_name: remoteid-frontend
+    container_name: remoteid-monitor-frontend
     restart: unless-stopped
     ports:
       - "80:80"
@@ -33,4 +33,4 @@ services:
       - backend
 
 volumes:
-  remoteid-data:
+  remoteid-monitor-data:

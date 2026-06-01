@@ -64,4 +64,5 @@ paths.csv
 .env.*.local
 
 # --- Build artifacts ---
-backend/remoteid
+backend/remoteid-monitor
+backend/ridparse

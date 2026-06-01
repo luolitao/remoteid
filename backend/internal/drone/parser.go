@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"remoteid/pkg/types"
+	"remoteid-monitor/pkg/types"
 	"strings"
 	"unicode/utf8"
 )
@@ -45,6 +45,11 @@ const (
 	asdStanOUI     = "\xFA\x0B\xBC" // ASD-STAN OUI
 	asdStanOUIType = 0x0D           // ASD-STAN OUI Type
 	msgSize        = 25             // 每条 Remote ID 消息固定 25 字节
+
+	// 旧版 ASTM / OpenDroneID 临时 OUI（部分 ESP32 早期实现使用）
+	// 参考：Wi-Fi Alliance 早期分配的临时 OUI，esp32-open-droneid 等开源项目使用
+	legacyASTMOUI     = "\x06\x05\x04" // 旧版 ASTM OUI
+	legacyASTMOUIType = 0xFD           // 旧版 ASTM OUI Type
 
 	// ASTM 专属常量
 	astmProtocolVersion = 2 // ASTM F3411-22a 协议版本号（字节 0 高 4 位）
@@ -166,10 +171,10 @@ func (p *RemoteIDParser) parseNANAttributes(raw []byte, offset int) []types.Dron
 				// 尝试按 ASTM 格式解析（NAN 中的 Remote ID 通常是 ASTM 格式）
 				// 先检查是否是 GB42590 格式
 				if len(remoteIDPayload) > 0 {
-					firstNibble := (remoteIDPayload[0] >> 4) & 0x0F
 					lowNibble := remoteIDPayload[0] & 0x0F
 
-					if lowNibble == gb42590InterfaceVersion && firstNibble != astmProtocolVersion {
+					// 优先检查 GB42590（低4位=0x1），即使高4位=2也不能误判为ASTM
+					if lowNibble == gb42590InterfaceVersion {
 						// GB42590 格式，跳过 Message Counter
 						if len(remoteIDPayload) > 1 {
 							msgs := p.parseGB42590BeaconMessages(remoteIDPayload[1:])
@@ -220,25 +225,88 @@ func (p *RemoteIDParser) parseVendorIE(raw []byte) ([]types.DroneMessage, error)
 		firstNibble := (payload[0] >> 4) & 0x0F
 		lowNibble := payload[0] & 0x0F
 
-		// 区分标准：检查低 4 位是否为 GB42590 接口版本 (0x1)
-		// ASTM 协议版本 = 2 (高4位), GB42590 接口版本 = 0x1 (低4位)
-		if lowNibble == gb42590InterfaceVersion && firstNibble != astmProtocolVersion {
-			// GB42590-2023 Beacon 格式
-			// 跳过 1 字节 Message Counter
-			msgPayload := payload[1:]
-			msgs := p.parseGB42590BeaconMessages(msgPayload)
-			messages = append(messages, msgs...)
-		} else if firstNibble == astmProtocolVersion {
-			// ASTM F3411-22a Beacon 格式（无 Message Counter）
-			msgs := p.parseASTMBeaconMessages(payload)
-			messages = append(messages, msgs...)
-		} else if firstNibble <= 5 && lowNibble != gb42590InterfaceVersion {
-			// 旧版格式：无 Message Counter，低4位非0x1，按 ASTM 尝试解析
+		// 区分标准：
+		//
+		// GB42590 Beacon 格式在 OUI+Type 后紧跟 1 字节 Message Counter（0-255），
+		// 然后是报文数据。因此 payload[0] 是 Message Counter，payload[1] 才是真正的报头。
+		//
+		// 关键：不能用 payload[0]（Message Counter）来判断标准！因为 Counter 值
+		// 的 nibble 组合是随机的（93.75% 概率 lowNibble != 0x1），会导致误判。
+		//
+		// 正确做法：
+		//  1. 先检查 payload[1] 是否是 GB42590 Packed (0xF1) 或 单消息 (lowNibble=0x1)
+		//  2. 再检查 payload[0] 是否是 ASTM 报头 (firstNibble=2)
+		//  3. 如果都不是，尝试按 GB42590（跳过 Counter）和 ASTM（不跳过）分别解析，取成功者
+		if len(payload) >= 2 {
+			// 检查 payload[1]（跳过可能的 Message Counter）是否为 GB42590
+			nextLowNibble := payload[1] & 0x0F
+
+			if nextLowNibble == gb42590InterfaceVersion {
+				// GB42590-2023 Beacon 格式（Packed 或单消息）
+				// 跳过 1 字节 Message Counter
+				msgPayload := payload[1:]
+				msgs := p.parseGB42590BeaconMessages(msgPayload)
+				messages = append(messages, msgs...)
+			} else if lowNibble == gb42590InterfaceVersion {
+				// GB42590 无 Message Counter（非标准但兼容）
+				msgs := p.parseGB42590BeaconMessages(payload)
+				messages = append(messages, msgs...)
+			} else if firstNibble == astmProtocolVersion {
+				// ASTM F3411-22a Beacon 格式（无 Message Counter）
+				msgs := p.parseASTMBeaconMessages(payload)
+				messages = append(messages, msgs...)
+			} else if firstNibble <= 5 {
+				// 旧版格式：无 Message Counter，按 ASTM 尝试解析
+				msgs := p.parseASTMBeaconMessages(payload)
+				messages = append(messages, msgs...)
+			} else {
+				// 可能是 GB42590 但 Message Counter 的 nibble 刚好落在无法判断的范围
+				// 尝试按 GB42590（跳过 Counter）解析
+				msgPayload := payload[1:]
+				msgs := p.parseGB42590BeaconMessages(msgPayload)
+				if len(msgs) > 0 {
+					messages = append(messages, msgs...)
+				} else {
+					// 回退：尝试按 ASTM 解析
+					msgs = p.parseASTMBeaconMessages(payload)
+					messages = append(messages, msgs...)
+				}
+			}
+		} else {
+			// payload 只有 1 字节，无法判断，按 ASTM 尝试
 			msgs := p.parseASTMBeaconMessages(payload)
 			messages = append(messages, msgs...)
 		}
-		// 找到一处 OUI 后退出
-		break
+		// 如果成功解析到消息，退出搜索；否则继续查找后续 OUI
+		if len(messages) > 0 {
+			break
+		}
+	}
+
+	// 如果没找到标准 ASD-STAN OUI，尝试搜索旧版 ASTM OUI (06:05:04 + 0xFD)
+	// 部分 ESP32 开源实现使用此 OUI
+	if len(messages) == 0 {
+		for idx := 0; idx <= len(raw)-4; idx++ {
+			if string(raw[idx:idx+3]) != legacyASTMOUI || raw[idx+3] != legacyASTMOUIType {
+				continue
+			}
+
+			payload := raw[idx+4:]
+			if len(payload) < 1 {
+				continue
+			}
+
+			firstNibble := (payload[0] >> 4) & 0x0F
+
+			// 旧版 ASTM 格式（无 Message Counter）
+			if firstNibble == astmProtocolVersion || firstNibble <= 5 {
+				msgs := p.parseASTMBeaconMessages(payload)
+				messages = append(messages, msgs...)
+			}
+			if len(messages) > 0 {
+				break
+			}
+		}
 	}
 
 	return messages, nil

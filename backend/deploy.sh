@@ -6,9 +6,9 @@ set -e
 
 TARGET="${1:-rpi5.lan}"
 USER="${2:-pi}"
-APP_DIR="/opt/remoteid"
-BUILD_DIR="/tmp/remoteid-backend"
-SVC="remoteid"
+APP_DIR="/opt/remoteid-monitor"
+BUILD_DIR="/tmp/remoteid-monitor-backend"
+SVC="remoteid-monitor"
 
 echo "📦 同步源码到 $TARGET ..."
 rsync -avz --delete \
@@ -16,38 +16,38 @@ rsync -avz --delete \
   --exclude '*.db' \
   --exclude '*.log' \
   --exclude 'ridparse' \
-  --exclude 'remoteid' \
+  --exclude 'remoteid-monitor' \
   ./ "$USER@$TARGET:$BUILD_DIR/"
 
 echo "🔨 在 $TARGET 上编译 ..."
 ssh "$USER@$TARGET" bash -s << 'ENDSSH'
 set -e
-cd /tmp/remoteid-backend
+cd /tmp/remoteid-monitor-backend
 
 echo "  → go build ..."
-go build -ldflags="-s -w" -o remoteid ./cmd/remoteid/
+go build -ldflags="-s -w" -o remoteid-monitor ./cmd/remoteid/
 
 echo "  → 停服 & 部署 ..."
-sudo systemctl stop remoteid 2>/dev/null || true
-sudo mkdir -p /opt/remoteid
-sudo cp remoteid /opt/remoteid/
-sudo cp config.yaml /opt/remoteid/
-sudo chmod +x /opt/remoteid/remoteid
+sudo systemctl stop remoteid-monitor 2>/dev/null || true
+sudo mkdir -p /opt/remoteid-monitor
+sudo cp remoteid-monitor /opt/remoteid-monitor/
+sudo cp config.yaml /opt/remoteid-monitor/
+sudo chmod +x /opt/remoteid-monitor/remoteid-monitor
 
 # 确保 systemd 服务存在
-if ! sudo test -f /etc/systemd/system/remoteid.service; then
+if ! sudo test -f /etc/systemd/system/remoteid-monitor.service; then
   echo "  → 创建 systemd 服务 ..."
-  sudo tee /etc/systemd/system/remoteid.service > /dev/null <<SVC
+  sudo tee /etc/systemd/system/remoteid-monitor.service > /dev/null <<SVC
 [Unit]
-Description=Remote ID Backend
+Description=Remote ID Monitor Backend
 After=network.target
 
 [Service]
 Type=simple
 User=pi
 Group=pi
-WorkingDirectory=/opt/remoteid
-ExecStart=/opt/remoteid/remoteid -config config.yaml
+WorkingDirectory=/opt/remoteid-monitor
+ExecStart=/opt/remoteid-monitor/remoteid-monitor -config config.yaml
 Restart=always
 RestartSec=5
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
@@ -55,17 +55,17 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 NoNewPrivileges=yes
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=remoteid
+SyslogIdentifier=remoteid-monitor
 
 [Install]
 WantedBy=multi-user.target
 SVC
   sudo systemctl daemon-reload
-  sudo systemctl enable remoteid
+  sudo systemctl enable remoteid-monitor
 fi
 
 echo "  → 启动服务 ..."
-sudo systemctl start remoteid
+sudo systemctl start remoteid-monitor
 ENDSSH
 
 echo ""

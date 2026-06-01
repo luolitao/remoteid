@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"remoteid/pkg/ws"
+	"remoteid-monitor/pkg/ws"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"

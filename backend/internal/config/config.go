@@ -118,7 +118,7 @@ func validateConfig() {
 
 	// 1. 验证数据库路径
 	if cfg.Database.Path == "" {
-		cfg.Database.Path = "/tmp/remoteid.db"
+		cfg.Database.Path = "/tmp/remoteid-monitor.db"
 	}
 
 	// 2. 验证网络接口
@@ -161,7 +161,7 @@ func getDefaultConfig() *Config {
 			MaxConnections int    `json:"max_connections" yaml:"max_connections"`
 			CacheSize      int    `json:"cache_size"      yaml:"cache_size"`
 		}{
-			Path:           "/tmp/remoteid.db",
+			Path:           "/tmp/remoteid-monitor.db",
 			MaxConnections: 5,
 			CacheSize:      512,
 		},
@@ -186,7 +186,7 @@ func getDefaultConfig() *Config {
 			File  string `json:"file"  yaml:"file"`
 		}{
 			Level: "info",
-			File:  "/tmp/remoteid.log",
+			File:  "/tmp/remoteid-monitor.log",
 		},
 		Debug: true,
 	}

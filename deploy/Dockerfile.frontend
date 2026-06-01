@@ -1,4 +1,4 @@
-# Remote ID Vue 3 前端 Dockerfile
+# Remote ID Monitor Vue 3 前端 Dockerfile
 FROM node:20-alpine AS builder
 
 WORKDIR /app
