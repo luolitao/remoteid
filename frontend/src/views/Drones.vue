@@ -13,6 +13,7 @@
         <thead>
           <tr class="aircraft_table_header sticky top-0 z-10" style="background: var(--ACCENT); color: #FFF;">
             <th class="text-left px-3 py-1.5 font-normal">ID</th>
+            <th class="text-left px-3 py-1.5 font-normal">Op. ID</th>
             <th class="text-left px-3 py-1.5 font-normal">MAC</th>
             <th class="text-left px-3 py-1.5 font-normal">Type</th>
             <th class="text-right px-3 py-1.5 font-normal">Lat</th>
@@ -31,26 +32,17 @@
             @click="$router.push(`/drone/${drone.mac}`)"
           >
             <td class="px-3 py-1 font-bold" style="color: var(--TXTCOLOR1);">{{ drone.uas_id || '-' }}</td>
+            <td class="px-3 py-1 font-mono text-xs">{{ drone.operator_id || '-' }}</td>
             <td class="px-3 py-1 font-mono text-xs">{{ shortenMac(drone.mac, true) }}</td>
             <td class="px-3 py-1">{{ drone.ua_type || '-' }}</td>
             <td class="px-3 py-1 text-right font-mono">{{ formatCoord(drone.latitude) }}</td>
             <td class="px-3 py-1 text-right font-mono">{{ formatCoord(drone.longitude) }}</td>
             <td class="px-3 py-1 text-right font-mono">{{ drone.altitude ? drone.altitude.toFixed(1)+'m' : '-' }}</td>
             <td class="px-3 py-1 text-right">{{ timeAgo(drone.last_seen) }}</td>
-            <td class="px-3 py-1 text-center">
-              <span
-                class="px-1.5 py-0.5 rounded text-xs font-bold"
-                :style="{
-                  background: drone.china_compliant ? '#dcfce7' : '#fee2e2',
-                  color: drone.china_compliant ? '#166534' : '#991b1b'
-                }"
-              >
-                {{ drone.china_compliant ? '✓' : '✗' }}
-              </span>
-            </td>
+
           </tr>
           <tr v-if="store.activeDrones.length === 0">
-            <td colspan="8" class="text-center py-8" style="color: var(--TXTCOLOR2);">No active drones</td>
+            <td colspan="9" class="text-center py-8" style="color: var(--TXTCOLOR2);">No active drones</td>
           </tr>
         </tbody>
       </table>

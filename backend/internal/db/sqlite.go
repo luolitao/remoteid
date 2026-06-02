@@ -104,6 +104,7 @@ func createTables() error {
 			first_seen TEXT NOT NULL,
 			last_seen TEXT NOT NULL,
 			uas_id TEXT NOT NULL,
+			operator_id TEXT,
 			ua_type TEXT NOT NULL,
 			id_type TEXT,
 			latitude REAL,
@@ -115,7 +116,6 @@ func createTables() error {
 			operator_longitude REAL,
 			area_radius_m INTEGER,
 			classification_region TEXT,
-			china_compliant BOOLEAN DEFAULT 0,
 			standard TEXT NOT NULL,
 			signal_strength TEXT,
 			battery_level TEXT,
@@ -214,6 +214,7 @@ func migrateSchema() error {
 
 	migrations := []columnAdd{
 		{"drones", "id_type", "TEXT"},
+		{"drones", "operator_id", "TEXT"},
 		{"drones", "operator_latitude", "REAL"},
 		{"drones", "operator_longitude", "REAL"},
 		{"drones", "area_radius_m", "INTEGER"},
@@ -349,14 +350,6 @@ func isValidLocation(lat, lon float64) bool {
 	return true
 }
 
-// boolToSQLiteBool 转换布尔值为 SQLite 布尔值
-func boolToSQLiteBool(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // getManufacturerFromUAType 从无人机类型推断制造商
 func getManufacturerFromUAType(uaType string) string {
 	uaTypeLower := strings.ToLower(uaType)
@@ -416,9 +409,9 @@ func GetActiveDrones() ([]*types.DroneData, error) {
 	since := time.Now().UTC().Add(activeWindow).Format(time.RFC3339)
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT mac, uas_id, ua_type, id_type, latitude, longitude, altitude,
+		SELECT mac, uas_id, operator_id, ua_type, id_type, latitude, longitude, altitude,
 		       speed, heading, operator_latitude, operator_longitude,
-		       classification_region, china_compliant, standard,
+		       classification_region, standard,
 		       signal_strength, battery_level, flight_time,
 		       first_seen, last_seen
 		FROM drones
@@ -436,18 +429,21 @@ func GetActiveDrones() ([]*types.DroneData, error) {
 		var firstSeenStr, lastSeenStr string
 		var lat, lon, alt, speed, heading sql.NullFloat64
 		var opLat, opLon sql.NullFloat64
-		var idType, classification, signalStr, battery, flight sql.NullString
+		var opID, idType, classification, signalStr, battery, flight sql.NullString
 
 		if err := rows.Scan(
-			&drone.MAC, &drone.UASID, &drone.UAType, &idType,
+			&drone.MAC, &drone.UASID, &opID, &drone.UAType, &idType,
 			&lat, &lon, &alt, &speed, &heading,
-			&opLat, &opLon, &classification, &drone.ChinaCompliant, &drone.Standard,
+			&opLat, &opLon, &classification, &drone.Standard,
 			&signalStr, &battery, &flight,
 			&firstSeenStr, &lastSeenStr,
 		); err != nil {
 			return nil, fmt.Errorf("扫描无人机数据失败: %w", err)
 		}
 
+		if opID.Valid {
+			drone.OperatorID = opID.String
+		}
 		if idType.Valid {
 			drone.IDType = idType.String
 		}
@@ -511,15 +507,16 @@ func SaveDrone(drone *types.DroneData) error {
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO drones (
-			mac, first_seen, last_seen, uas_id, ua_type, id_type,
+			mac, first_seen, last_seen, uas_id, operator_id, ua_type, id_type,
 			latitude, longitude, altitude, speed, heading,
 			operator_latitude, operator_longitude, area_radius_m,
-			classification_region, china_compliant, standard,
+			classification_region, standard,
 			signal_strength, battery_level, flight_time
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(mac) DO UPDATE SET
 			last_seen = excluded.last_seen,
 			uas_id = excluded.uas_id,
+			operator_id = COALESCE(excluded.operator_id, drones.operator_id),
 			ua_type = excluded.ua_type,
 			id_type = COALESCE(excluded.id_type, drones.id_type),
 			latitude = COALESCE(excluded.latitude, drones.latitude),
@@ -531,17 +528,17 @@ func SaveDrone(drone *types.DroneData) error {
 			operator_longitude = COALESCE(excluded.operator_longitude, drones.operator_longitude),
 			area_radius_m = COALESCE(excluded.area_radius_m, drones.area_radius_m),
 			classification_region = COALESCE(excluded.classification_region, drones.classification_region),
-			china_compliant = excluded.china_compliant,
+
 			standard = excluded.standard,
 			signal_strength = COALESCE(excluded.signal_strength, drones.signal_strength),
 			battery_level = COALESCE(excluded.battery_level, drones.battery_level),
 			flight_time = COALESCE(excluded.flight_time, drones.flight_time)
 	`,
-		drone.MAC, firstSeen, lastSeen, drone.UASID, drone.UAType, nullString(drone.IDType),
+		drone.MAC, firstSeen, lastSeen, drone.UASID, nullString(drone.OperatorID), drone.UAType, nullString(drone.IDType),
 		nullFloat64(drone.Latitude), nullFloat64(drone.Longitude), nullFloat64(drone.Altitude),
 		nullFloat64(drone.Speed), nullFloat64(drone.Heading),
 		nullFloat64(drone.OperatorLatitude), nullFloat64(drone.OperatorLongitude), nullInt(drone.AreaRadiusM),
-		nullString(drone.Classification), boolToSQLiteBool(drone.ChinaCompliant), drone.Standard,
+		nullString(drone.Classification), drone.Standard,
 		nullString(drone.SignalStrength), nullString(drone.BatteryLevel), nullString(drone.FlightTime),
 	)
 	if err != nil {
@@ -602,16 +599,6 @@ func GetTotalDroneCount() (int, error) {
 	var count int
 	err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM drones
-	`).Scan(&count)
-
-	return count, err
-}
-
-// GetCompliantDroneCount 获取合规无人机数量
-func GetCompliantDroneCount() (int, error) {
-	var count int
-	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM drones WHERE china_compliant = 1
 	`).Scan(&count)
 
 	return count, err

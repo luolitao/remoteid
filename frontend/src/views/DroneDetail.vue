@@ -16,14 +16,8 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
-        <span
-          class="px-2 py-0.5 rounded text-xs font-bold"
-          :style="{
-            background: drone?.china_compliant ? '#dcfce7' : '#fee2e2',
-            color: drone?.china_compliant ? '#166534' : '#991b1b'
-          }"
-        >
-          {{ drone?.china_compliant ? 'CAA Compliant' : 'Non-compliant' }}
+        <span class="px-2 py-0.5 rounded text-xs font-bold" style="background: #dcfce7; color: #166534;">
+          {{ drone?.standard || 'ASTM F3411-22a' }}
         </span>
         <button @click="exportData" class="sidebarButton text-xs px-2">CSV</button>
         <button @click="refreshData" class="sidebarButton text-xs px-2">↻</button>
@@ -135,9 +129,13 @@
         </div>
 
         <!-- 操作员信息 -->
-        <div v-if="drone?.operator_latitude" class="infoBlockSection" style="border-bottom: 1px solid var(--BGCOLOR2);">
+        <div v-if="drone?.operator_latitude || drone?.operator_id" class="infoBlockSection" style="border-bottom: 1px solid var(--BGCOLOR2);">
           <div style="color: var(--TXTCOLOR1); font-weight: bold; margin-bottom: 4px;">Operator</div>
-          <div>
+          <div v-if="drone?.operator_id">
+            <div class="infoHeading">Op. ID:</div>
+            <div class="infoData font-mono">{{ drone.operator_id }}</div>
+          </div>
+          <div v-if="drone?.operator_latitude">
             <div class="infoHeading">Position:</div>
             <div class="infoData font-mono text-xs">{{ formatCoord(drone.operator_latitude) }}, {{ formatCoord(drone.operator_longitude) }}</div>
           </div>
@@ -262,7 +260,7 @@ const updateMarker = () => {
     droneMarker.setLatLng([d.latitude, d.longitude])
   } else {
     droneMarker = L.marker([d.latitude, d.longitude], {
-      icon: createDroneIcon(d.china_compliant ? 'green' : 'red', 14)
+      icon: createDroneIcon('blue', 14)
     }).addTo(map)
     droneMarker.bindPopup(`
       <div style="font-size:13px;">

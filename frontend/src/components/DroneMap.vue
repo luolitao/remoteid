@@ -34,10 +34,10 @@ const initMap = () => {
 
 const updateMarker = () => {
   if (!map || !props.drone) return
-  const { latitude, longitude, altitude, uas_id, standard, last_seen, china_compliant } = props.drone
+  const { latitude, longitude, altitude, uas_id, standard, last_seen } = props.drone
   if (!latitude || !longitude) return
 
-  const color = china_compliant === false ? 'red' : 'green'
+  const color = standard === 'ASTM F3411-22a' ? 'blue' : 'green'
 
   if (droneMarker) {
     droneMarker.setLatLng([latitude, longitude])

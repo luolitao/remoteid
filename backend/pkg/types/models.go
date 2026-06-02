@@ -7,6 +7,7 @@ import (
 type DroneData struct {
 	MAC               string    `json:"mac"`
 	UASID             string    `json:"uas_id"`
+	OperatorID        string    `json:"operator_id"`
 	UAType            string    `json:"ua_type"`
 	IDType            string    `json:"id_type"`
 	Standard          string    `json:"standard"`
@@ -28,7 +29,6 @@ type DroneData struct {
 	OperatorAltitude  float64   `json:"operator_altitude"`
 	AreaRadiusM       int       `json:"area_radius_m"`
 	Classification    string    `json:"classification_region"`
-	ChinaCompliant    bool      `json:"china_compliant"`
 	SignalStrength    string    `json:"signal_strength"`
 	BatteryLevel      string    `json:"battery_level"`
 	FlightTime        string    `json:"flight_time"`

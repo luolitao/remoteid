@@ -72,7 +72,7 @@ func main() {
 	apiURL := flag.String("url", "http://127.0.0.1:8000", "后端 API 地址（TUI 模式使用）")
 	refresh := flag.Duration("refresh", 2*time.Second, "TUI 刷新间隔")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `ridparse — Remote ID Monitor (ASTM F3411 / GB42590) 数据解析工具
+		fmt.Fprintf(os.Stderr, `ridparse — Remote ID Monitor (ASTM F3411-22a / ASD-STAN) 数据解析工具
 
 用法:
   ridparse -iface wlan1                     实时抓包并解析
@@ -312,9 +312,6 @@ func renderTUI(drones []*types.DroneData, wsConnected bool, apiURL string) {
 		for _, d := range drones {
 			stdColor := colorBlue
 			stdLabel := d.Standard
-			if strings.HasPrefix(d.Standard, "GB42590") {
-				stdColor = colorGreen
-			}
 
 			loc := "-"
 			if d.Latitude != 0 || d.Longitude != 0 {
@@ -451,18 +448,20 @@ func parseLive(iface string) {
 // ============================================================
 
 func printHeader() {
-	fmt.Printf("%s%-20s %-10s %-10s %-22s %-12s %-10s %-8s %-8s%s\n",
+	fmt.Printf("%s%-20s %-10s %-8s %-14s %-22s %-12s %-10s %-8s %-8s%s\n",
 		colorBold,
-		"MAC", "标准", "帧类型", "UA_ID", "纬度", "经度", "高度(m)", "速度(m/s)",
+		"MAC", "标准", "传输", "频段", "UA_ID", "纬度", "经度", "高度(m)", "速度(m/s)",
 		colorReset)
-	fmt.Printf("%s%s%s\n", colorCyan, strings.Repeat("─", 110), colorReset)
+	fmt.Printf("%s%s%s\n", colorCyan, strings.Repeat("─", 130), colorReset)
 }
 
 func processPacket(packet gopacket.Packet) {
 	signalStrength := -100
+	var freqMHz uint16
 	if rl := packet.Layer(layers.LayerTypeRadioTap); rl != nil {
 		if rt, ok := rl.(*layers.RadioTap); ok {
 			signalStrength = int(rt.DBMAntennaSignal)
+			freqMHz = uint16(rt.ChannelFrequency)
 		}
 	}
 
@@ -494,6 +493,13 @@ func processPacket(packet gopacket.Packet) {
 
 	raw := packet.Data()
 
+	// 确定传输类型和 OUI
+	transport := "Beacon"
+	ouiLabel := ""
+	if frameSubtype == 13 {
+		transport = "NAN"
+	}
+
 	var messages []types.DroneMessage
 	var standard string
 
@@ -501,6 +507,7 @@ func processPacket(packet gopacket.Packet) {
 		if !isValidNANRemoteID(raw) {
 			return
 		}
+		ouiLabel = "50:6F:9A(NAN)+FA:0B:BC(RemoteID)"
 		msgs, err := parser.ParseNANFrame(raw)
 		if err != nil || len(msgs) == 0 {
 			return
@@ -511,6 +518,7 @@ func processPacket(packet gopacket.Packet) {
 		if !isValidRemoteID(raw) {
 			return
 		}
+		ouiLabel = detectOUI(raw)
 		msgs, err := parser.ParseFrame(raw)
 		if err != nil || len(msgs) == 0 {
 			return
@@ -521,10 +529,31 @@ func processPacket(packet gopacket.Packet) {
 		}
 	}
 
+	// 确定频段标签
+	bandLabel := "WiFi(Unknown)"
+	if freqMHz >= 5000 {
+		bandLabel = fmt.Sprintf("WiFi 5G(%dMHz)", freqMHz)
+	} else if freqMHz > 0 {
+		bandLabel = fmt.Sprintf("WiFi 2.4G(%dMHz)", freqMHz)
+	}
+
 	stats.dronePackets++
 	stats.uniqueDrones[srcMAC] = true
 
-	printDroneInfo(srcMAC, standard, messages, signalStrength)
+	printDroneInfo(srcMAC, standard, messages, signalStrength, bandLabel, transport, ouiLabel)
+}
+
+// detectOUI 检测 Beacon 帧中的 Remote ID OUI，返回 OUI 标签
+func detectOUI(raw []byte) string {
+	for i := 0; i < len(raw)-4; i++ {
+		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC && raw[i+3] == 0x0D {
+			return "FA:0B:BC(ASD-STAN)"
+		}
+		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 && raw[i+3] == 0xFD {
+			return "06:05:04(LegacyASTM)"
+		}
+	}
+	return "-"
 }
 
 func getMgmtSubtype(t layers.Dot11Type) uint8 {
@@ -551,44 +580,26 @@ func getMgmtSubtype(t layers.Dot11Type) uint8 {
 }
 
 func isValidRemoteID(raw []byte) bool {
-	for i := 0; i < len(raw)-4; i++ {
+	for i := 0; i < len(raw)-5; i++ {
 		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
 		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
-			if i+4 < len(raw) && raw[i+3] == 0x0D {
-				payload := raw[i+4:]
+			if i+5 < len(raw) && raw[i+3] == 0x0D {
+				// 跳过 OUI(3B) + VendType(1B) + Message Counter(1B) = 5 字节
+				payload := raw[i+5:]
 				if len(payload) < 1 {
 					continue
-				}
-
-				// 优先检查 payload[1]（跳过可能的 Message Counter）是否为 GB42590
-				if len(payload) > 1 {
-					nextNibble := (payload[1] >> 4) & 0x0F
-					nextLow := payload[1] & 0x0F
-					// GB42590 Packed 格式
-					if nextNibble == 0xF {
-						return true
-					}
-					// GB42590 单消息
-					if nextLow == 0x1 && nextNibble <= 5 {
-						return true
-					}
 				}
 
 				firstNibble := (payload[0] >> 4) & 0x0F
 				lowNibble := payload[0] & 0x0F
 
-				// ASTM: 高4位=协议版本(2), 低4位=消息类型(0-5)
+				// 高4位=消息类型(0-5), 低4位=协议版本(2)
+				if firstNibble <= 5 && lowNibble == 2 {
+					return true
+				}
+
+				// 兼容旧版格式
 				if firstNibble == 2 && lowNibble <= 5 {
-					return true
-				}
-
-				// GB42590 单消息（无 Message Counter）
-				if lowNibble == 0x1 && firstNibble <= 5 {
-					return true
-				}
-
-				// 旧版格式
-				if firstNibble <= 5 {
 					return true
 				}
 			}
@@ -596,14 +607,15 @@ func isValidRemoteID(raw []byte) bool {
 
 		// 检查旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)
 		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
-			if i+4 < len(raw) && raw[i+3] == 0xFD {
-				payload := raw[i+4:]
+			if i+5 < len(raw) && raw[i+3] == 0xFD {
+				// 跳过 OUI(3B) + OUI_Type(1B) + Message Counter(1B) = 5 字节
+				payload := raw[i+5:]
 				if len(payload) < 1 {
 					continue
 				}
 				firstNibble := (payload[0] >> 4) & 0x0F
 				lowNibble := payload[0] & 0x0F
-				if firstNibble == 2 && lowNibble <= 5 {
+				if firstNibble <= 5 && lowNibble == 2 {
 					return true
 				}
 			}
@@ -630,7 +642,7 @@ func isValidNANRemoteID(raw []byte) bool {
 	return hasWiFiAlliance && hasRemoteID
 }
 
-func printDroneInfo(mac, standard string, messages []types.DroneMessage, signal int) {
+func printDroneInfo(mac, standard string, messages []types.DroneMessage, signal int, band, transport, oui string) {
 	var (
 		uasID    string
 		uaType   string
@@ -670,9 +682,6 @@ func printDroneInfo(mac, standard string, messages []types.DroneMessage, signal 
 	}
 
 	stdColor := colorBlue
-	if strings.Contains(standard, "GB42590") {
-		stdColor = colorGreen
-	}
 
 	uasID = truncate(uasID, 20)
 	uaType = truncate(uaType, 10)
@@ -689,14 +698,19 @@ func printDroneInfo(mac, standard string, messages []types.DroneMessage, signal 
 		speed = "-"
 	}
 
-	fmt.Printf("%s%-20s%s %s%-10s%s %-10s %-22s %-12s %-10s %-8s %-8s %s%d dBm%s\n",
+	// 输出格式: MAC | 标准 | 帧类型 | UA_ID | 纬度 | 经度 | 高度(m) | 速度(m/s) | 信号
+	// 协议管理信息单独一行输出
+	fmt.Printf("%s%-20s%s %s%-10s%s %s%-8s%s %s%-14s%s %-22s %-12s %-10s %-8s %-8s %s%d dBm%s\n",
 		colorYellow, mac, colorReset,
 		stdColor, standard, colorReset,
-		strings.Join(msgTypes, "+"),
+		colorCyan, transport, colorReset,
+		colorGreen, band, colorReset,
 		uaType+" | "+uasID,
 		lat, lon, alt, speed,
 		colorWhite, signal, colorReset,
 	)
+	// OUI 信息行
+	fmt.Printf("  %s└─ OUI: %s%s\n", colorGray, oui, colorReset)
 }
 
 func printStats() {

@@ -231,7 +231,14 @@ func SetLogLevel() {
 
 	opts := &slog.HandlerOptions{
 		Level: level,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				t := a.Value.Time()
+				a.Value = slog.StringValue(t.Format("2006-01-02T15:04:05.000"))
+			}
+			return a
+		},
 	}
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, opts))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
 	slog.SetDefault(logger)
 }

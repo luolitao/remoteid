@@ -25,6 +25,6 @@
 
 ## 技术栈
 
-- 后端：Go，使用 gopacket 抓包解析 WiFi Remote ID（ASTM F3411 / GB42590）
+- 后端：Go，使用 gopacket 抓包解析 WiFi Remote ID（ASTM F3411-22a / ASD-STAN），涵盖 WiFi Beacon 和 NAN Service Discovery Frame
 - 前端：Vue
 - 部署：systemd 管理服务，`/opt/remoteid-monitor/`

@@ -351,10 +351,6 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 		drone.IDType = msg.Data["id_type"]
 		drone.Standard = msg.Standard
 		drone.Source = msg.Source
-		// 中国标准合规检查
-		if msg.Data["id_type"] == "CAARegistrationID" || msg.Standard == "GB42590-2023" {
-			drone.ChinaCompliant = true
-		}
 	case "location":
 		if lat, ok := msg.Data["latitude"]; ok {
 			if f, err := strconv.ParseFloat(lat, 64); err == nil {
@@ -440,6 +436,10 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 			slog.Warn("保存位置数据失败", "mac", drone.MAC, "error", err)
 		}
 
+	case "operator_id":
+		if opID, ok := msg.Data["operator_id"]; ok && opID != "" {
+			drone.OperatorID = opID
+		}
 	case "system":
 		if opLat, ok := msg.Data["operator_lat"]; ok {
 			if f, err := strconv.ParseFloat(opLat, 64); err == nil {

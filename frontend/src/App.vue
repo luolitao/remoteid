@@ -203,9 +203,6 @@
                 <template v-else-if="col.key === 'status'">{{ drone.status || '-' }}</template>
                 <template v-else-if="col.key === 'id_type'">{{ drone.id_type || '-' }}</template>
                 <template v-else-if="col.key === 'signal'">{{ drone.signal_strength || '-' }}</template>
-                <template v-else-if="col.key === 'china_compliant'">
-                  <span :style="{ color: drone.china_compliant ? '#38a169' : '#e53e3e' }">{{ drone.china_compliant ? '✓' : '✗' }}</span>
-                </template>
                 <template v-else-if="col.key === 'first_seen'">{{ formatTimeShort(drone.first_seen) }}</template>
                 <template v-else-if="col.key === 'operator_lat'">{{ drone.operator_latitude != null ? drone.operator_latitude.toFixed(4) : '-' }}</template>
                 <template v-else-if="col.key === 'operator_lng'">{{ drone.operator_longitude != null ? drone.operator_longitude.toFixed(4) : '-' }}</template>
@@ -238,12 +235,7 @@
           <div class="infoRow"><span class="infoHeading">Type:</span><span class="infoData">{{ selectedDrone.ua_type || 'N/A' }}</span></div>
           <div class="infoRow"><span class="infoHeading">Standard:</span><span class="infoData" :style="{ color: selectedDrone.standard ? '#38a169' : '#999' }">{{ selectedDrone.standard || 'N/A' }}</span></div>
           <div v-if="selectedDrone.source" class="infoRow"><span class="infoHeading">Via:</span><span class="infoData">{{ selectedDrone.source }}</span></div>
-          <div class="infoRow">
-            <span class="infoHeading">Compliance:</span>
-            <span class="infoData" :style="{ color: selectedDrone.china_compliant ? '#38a169' : '#e53e3e' }">
-              {{ selectedDrone.china_compliant ? 'CAA Compliant' : 'Non-compliant' }}
-            </span>
-          </div>
+          <div v-if="selectedDrone.operator_id" class="infoRow"><span class="infoHeading">Op. ID:</span><span class="infoData">{{ selectedDrone.operator_id }}</span></div>
         </div>
         <div class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
           <div class="infoRow"><span class="infoHeading">Lat:</span><span class="infoData font-mono">{{ formatCoord(selectedDrone.latitude) }}</span></div>
@@ -262,9 +254,10 @@
           <div class="infoRow"><span class="infoHeading">First:</span><span class="infoData">{{ formatTime(selectedDrone.first_seen) }}</span></div>
           <div class="infoRow"><span class="infoHeading">Last:</span><span class="infoData">{{ timeAgo(selectedDrone.last_seen) }}</span></div>
         </div>
-        <div v-if="selectedDrone.operator_latitude" class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
+        <div v-if="selectedDrone.operator_latitude || selectedDrone.operator_id" class="infoBlockSection" style="border-top:1px solid var(--BGCOLOR2); padding-top:2px; padding-bottom:2px;">
           <div style="font-weight:bold; font-size:11px; margin-bottom:2px; color:var(--TXTCOLOR1);">Operator</div>
-          <div class="infoRow"><span class="infoHeading">Pos:</span><span class="infoData font-mono" style="font-size:10px;">{{ formatCoord(selectedDrone.operator_latitude) }}, {{ formatCoord(selectedDrone.operator_longitude) }}</span></div>
+          <div v-if="selectedDrone.operator_id" class="infoRow"><span class="infoHeading">Op. ID:</span><span class="infoData font-mono" style="font-size:10px;">{{ selectedDrone.operator_id }}</span></div>
+          <div v-if="selectedDrone.operator_latitude" class="infoRow"><span class="infoHeading">Pos:</span><span class="infoData font-mono" style="font-size:10px;">{{ formatCoord(selectedDrone.operator_latitude) }}, {{ formatCoord(selectedDrone.operator_longitude) }}</span></div>
           <div v-if="selectedDrone.area_radius_m" class="infoRow"><span class="infoHeading">Radius:</span><span class="infoData">{{ selectedDrone.area_radius_m }} m</span></div>
           <div v-if="selectedDrone.classification_region" class="infoRow"><span class="infoHeading">Region:</span><span class="infoData">{{ selectedDrone.classification_region }}</span></div>
         </div>
@@ -402,7 +395,6 @@ const availableColumns = [
   { key: 'status', label: 'Status', align: 'left', size: 'var(--FS2)', default: false },
   { key: 'id_type', label: 'ID Type', align: 'left', size: '10px', default: false },
   { key: 'signal', label: 'Signal', align: 'left', size: 'var(--FS2)', default: false },
-  { key: 'china_compliant', label: 'Compl', align: 'left', size: 'var(--FS2)', default: false },
   { key: 'first_seen', label: 'First', align: 'right', size: '10px', default: false },
   { key: 'operator_lat', label: 'Op Lat', align: 'right', size: '10px', default: false },
   { key: 'operator_lng', label: 'Op Lng', align: 'right', size: '10px', default: false },
@@ -443,8 +435,7 @@ const getRowClass = (drone) => {
   if (!drone) return ''
   const classes = []
   if (!isRecent(drone.last_seen, 5)) classes.push('stale_row')
-  if (drone.china_compliant === false) classes.push('noncompliant_row')
-  else if (drone.standard === 'ASTM') classes.push('astm_row')
+  if (drone.standard === 'ASTM F3411-22a') classes.push('astm_row')
   return classes.join(' ')
 }
 
@@ -552,8 +543,7 @@ const changeMapType = (key) => {
 
 // ---- 无人机标记 ----
 const getDroneColor = (drone) => {
-  if (!drone.china_compliant && drone.china_compliant !== undefined) return 'red'
-  if (drone.standard === 'ASTM') return 'blue'
+  if (drone.standard === 'ASTM F3411-22a') return 'blue'
   return 'green'
 }
 

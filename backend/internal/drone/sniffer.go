@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	defaultSignalStrength   = -100  // 默认信号强度 (dBm)
-	signalStrengthThreshold = -95   // 信号强度过滤阈值 (dBm)
+	defaultSignalStrength   = -100            // 默认信号强度 (dBm)
+	signalStrengthThreshold = -95             // 信号强度过滤阈值 (dBm)
 	statsLogInterval        = 3 * time.Second // 统计日志输出间隔
 )
 
@@ -201,12 +201,14 @@ func (s *Sniffer) logStats() {
 }
 
 func (s *Sniffer) processPacket(packet gopacket.Packet) {
-	// 检查 RadioTap 层（信号强度信息）
+	// 检查 RadioTap 层（信号强度 + 频段信息）
 	radioTapLayer := packet.Layer(layers.LayerTypeRadioTap)
 	var signalStrength int = defaultSignalStrength
+	var freqMHz uint16
 	if radioTapLayer != nil {
 		if radioTap, ok := radioTapLayer.(*layers.RadioTap); ok {
 			signalStrength = int(radioTap.DBMAntennaSignal)
+			freqMHz = uint16(radioTap.ChannelFrequency)
 		}
 	}
 
@@ -308,22 +310,42 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 		}
 	}
 
-	// 检查 Remote ID 特征（ASTM/ASD-STAN Beacon + GB42590 + NAN）
+	// 检查 Remote ID 特征（ASTM/ASD-STAN Beacon + NAN）
 	raw := packet.Data()
 
 	// 根据帧类型选择检测方式
 	var deviceType string
+	var detectedOUI string
 	if frameSubtype == 13 {
 		// Action Frame: 检测 NAN SDF (Wi-Fi Alliance OUI: 50:6F:9A)
 		deviceType = s.classifyNANDevice(srcMAC, raw)
+		if deviceType == "drone" {
+			detectedOUI = "50:6F:9A(NAN)+FA:0B:BC(RemoteID)"
+		}
 	} else {
 		// Beacon: 检测 Vendor Specific IE (ASD-STAN OUI: FA:0B:BC + 0x0D)
-		deviceType = s.classifyDevice(srcMAC, raw, nil)
+		deviceType, detectedOUI = s.classifyDeviceWithOUI(srcMAC, raw)
+	}
+
+	// 确定频段标签
+	bandLabel := getBandLabel(freqMHz)
+
+	// 确定传输类型标签
+	var transportLabel string
+	if frameSubtype == 13 {
+		transportLabel = "NAN"
+	} else {
+		transportLabel = "Beacon"
 	}
 
 	switch deviceType {
 	case "drone":
-		slog.Info("检测到真实无人机", "mac", srcMAC, "signal_dbm", signalStrength)
+		slog.Info("检测到无人机",
+			"mac", srcMAC,
+			"band", bandLabel,
+			"transport", transportLabel,
+			"oui", detectedOUI,
+			"signal_dbm", signalStrength)
 		s.stats.dronesDetected++
 
 		var messages []types.DroneMessage
@@ -354,21 +376,47 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	}
 }
 
-// classifyDevice 设备分类（ASTM/ASD-STAN + GB42590）
-//
-// ASTM Beacon 和 GB42590 使用相同的 Vendor Specific IE：
-//
-//	OUI: FA:0B:BC (ASD-STAN), OUI_Type: 0x0D
-//
-// 通过消息内容区分：
-//   - 字节 0 高 4 位 = 0xF → Packed 格式 → GB42590-2023
-//   - 字节 0 高 4 位 = 2 → ASTM F3411-22a
-//   - 字节 0 高 4 位 = 0 或 1 → 通过 Basic ID 字段区分
-func (s *Sniffer) classifyDevice(mac string, raw []byte, gb []int) string {
-	if s.isValidRemoteID(raw) {
-		return "drone"
+// getBandLabel 根据频率确定频段标签
+func getBandLabel(freqMHz uint16) string {
+	if freqMHz == 0 {
+		return "WiFi(Unknown)"
 	}
-	return "normal"
+	if freqMHz >= 5000 {
+		return fmt.Sprintf("WiFi 5G(%dMHz)", freqMHz)
+	}
+	return fmt.Sprintf("WiFi 2.4G(%dMHz)", freqMHz)
+}
+
+// classifyDevice 设备分类（ASTM/ASD-STAN）
+func (s *Sniffer) classifyDevice(mac string, raw []byte, gb []int) string {
+	deviceType, _ := s.classifyDeviceWithOUI(mac, raw)
+	return deviceType
+}
+
+// classifyDeviceWithOUI 设备分类并返回检测到的 OUI 信息
+func (s *Sniffer) classifyDeviceWithOUI(mac string, raw []byte) (string, string) {
+	oui := s.detectBeaconOUI(raw)
+	if oui != "" {
+		return "drone", oui
+	}
+	return "normal", ""
+}
+
+// detectBeaconOUI 检测 Beacon 帧中的 Remote ID OUI，返回 OUI 描述
+func (s *Sniffer) detectBeaconOUI(raw []byte) string {
+	for i := 0; i < len(raw)-4; i++ {
+		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
+			if i+4 < len(raw) && raw[i+3] == 0x0D {
+				return "FA:0B:BC(ASD-STAN)"
+			}
+		}
+		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
+			if i+4 < len(raw) && raw[i+3] == 0xFD {
+				return "06:05:04(LegacyASTM)"
+			}
+		}
+	}
+	return ""
 }
 
 // isValidRemoteID 统一检查是否为 Remote ID 设备
@@ -377,70 +425,41 @@ func (s *Sniffer) classifyDevice(mac string, raw []byte, gb []int) string {
 // 以及旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)，
 // 验证消息格式有效性。
 //
-// GB42590 Beacon 格式: OUI + OUI_Type + [MsgCounter 1B] + Messages
-// ASTM Beacon 格式:   OUI + OUI_Type + Messages
+// Vendor Specific IE 结构:
 //
-// 重要：GB42590 Packed 格式在 OUI+Type 后紧跟 Message Counter（1 字节），
-// 然后是 Packed 报头 (0xF1)。因此 payload[0] = Message Counter，
-// payload[1] = Packed 报头或单消息报头。
-// 不能用 payload[0] 来判断 Packed（0xF），因为那是 Message Counter 不是报头。
+//	[Element ID: 0xDD] [Len] [OUI: FA:0B:BC] [Vend Type: 0x0D] [Message Counter: 1B] [Messages...]
 func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 	for i := 0; i < len(raw)-4; i++ {
 		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
-		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
-			if i+4 < len(raw) && raw[i+3] == 0x0D {
-				payload := raw[i+4:]
-				if len(payload) < 1 {
-					continue
-				}
-
-				// 优先检查 payload[1]（跳过可能的 Message Counter）是否为 GB42590
-				// GB42590 Packed: payload[1] 高4位 = 0xF
-				// GB42590 单消息: payload[1] 低4位 = 0x1
-				if len(payload) > 1 {
-					nextNibble := (payload[1] >> 4) & 0x0F
-					nextLow := payload[1] & 0x0F
-					// GB42590 Packed 格式
-					if nextNibble == 0xF {
-						return true
-					}
-					// GB42590 单消息
-					if nextLow == 0x1 && nextNibble <= 5 {
-						return true
-					}
-				}
-
-				firstNibble := (payload[0] >> 4) & 0x0F
-				lowNibble := payload[0] & 0x0F
-
-				// ASTM: 高4位=协议版本(2), 低4位=消息类型(0-5)
-				if firstNibble == 2 && lowNibble <= 5 {
-					return true
-				}
-
-				// GB42590 单消息（无 Message Counter 的情况，payload[0] 直接是报头）
-				if lowNibble == 0x1 && firstNibble <= 5 {
-					return true
-				}
-
-				// 旧版格式
-				if firstNibble <= 5 {
+		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC && raw[i+3] == 0x0D {
+			// 在 OUI+Type 之后扫描查找 ASTM 消息 Header（最多 8 字节）
+			scanStart := i + 4
+			maxScan := scanStart + 8
+			if maxScan > len(raw) {
+				maxScan = len(raw)
+			}
+			for j := scanStart; j < maxScan; j++ {
+				b := raw[j]
+				msgType := (b >> 4) & 0x0F
+				protoVer := b & 0x0F
+				if (msgType <= 5 && protoVer == 2) || (msgType == 2 && protoVer <= 5) {
 					return true
 				}
 			}
 		}
 
 		// 检查旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)
-		// 部分 ESP32 开源实现使用此 OUI
-		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
-			if i+4 < len(raw) && raw[i+3] == 0xFD {
-				payload := raw[i+4:]
-				if len(payload) < 1 {
-					continue
-				}
-				firstNibble := (payload[0] >> 4) & 0x0F
-				lowNibble := payload[0] & 0x0F
-				if firstNibble == 2 && lowNibble <= 5 {
+		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 && raw[i+3] == 0xFD {
+			scanStart := i + 4
+			maxScan := scanStart + 8
+			if maxScan > len(raw) {
+				maxScan = len(raw)
+			}
+			for j := scanStart; j < maxScan; j++ {
+				b := raw[j]
+				msgType := (b >> 4) & 0x0F
+				protoVer := b & 0x0F
+				if (msgType <= 5 && protoVer == 2) || (msgType == 2 && protoVer <= 5) {
 					return true
 				}
 			}

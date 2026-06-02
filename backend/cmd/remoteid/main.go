@@ -21,6 +21,14 @@ func init() {
 	// 设置默认日志格式（JSON 格式便于结构化解析）
 	opts := &slog.HandlerOptions{
 		Level: slog.LevelInfo,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				// 格式: 2006-01-02T15:04:05.000（毫秒精度，无时区）
+				t := a.Value.Time()
+				a.Value = slog.StringValue(t.Format("2006-01-02T15:04:05.000"))
+			}
+			return a
+		},
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
 	slog.SetDefault(logger)
