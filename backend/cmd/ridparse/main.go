@@ -593,13 +593,13 @@ func isValidRemoteID(raw []byte) bool {
 				firstNibble := (payload[0] >> 4) & 0x0F
 				lowNibble := payload[0] & 0x0F
 
-				// 高4位=消息类型(0-5), 低4位=协议版本(2)
-				if firstNibble <= 5 && lowNibble == 2 {
+				// 高4位=消息类型(0-5), 低4位=协议版本(1=GB, 2=ASTM)
+				if firstNibble <= 5 && (lowNibble == 2 || lowNibble == 1) {
 					return true
 				}
 
 				// 兼容旧版格式
-				if firstNibble == 2 && lowNibble <= 5 {
+				if (firstNibble == 2 || firstNibble == 1) && lowNibble <= 5 {
 					return true
 				}
 			}
@@ -615,7 +615,7 @@ func isValidRemoteID(raw []byte) bool {
 				}
 				firstNibble := (payload[0] >> 4) & 0x0F
 				lowNibble := payload[0] & 0x0F
-				if firstNibble <= 5 && lowNibble == 2 {
+				if firstNibble <= 5 && (lowNibble == 2 || lowNibble == 1) {
 					return true
 				}
 			}

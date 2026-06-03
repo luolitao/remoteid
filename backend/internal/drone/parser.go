@@ -23,6 +23,12 @@ import (
 //       Header: 高4位=消息类型(0-5), 低4位=协议版本(2)
 //     - WiFi NAN: NAN Service Discovery Frame
 //       OUI: 50:6F:9A (Wi-Fi Alliance)
+//
+//  GB 42590-2023（中国国标）
+//     - 复用 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
+//     - 协议版本 nibble = 0x1（区别于 ASTM 的 0x2）
+//     - 字段偏移与 ASTM 不同：Location/System 消息比 ASTM 多 1 字节偏移
+//     - 支持 Packed 格式（消息类型 0xF）
 
 const (
 	// ASTM/ASD-STAN Vendor Specific IE OUI
@@ -36,6 +42,9 @@ const (
 
 	// ASTM 专属常量
 	astmProtocolVersion = 2 // ASTM F3411-22a 协议版本号（字节 0 高 4 位）
+
+	// GB 42590-2023 常量
+	gbProtocolVersion = 1 // GB 42590-2023 协议版本号（字节 0 高 4 位）
 )
 
 type RemoteIDParser struct{}
@@ -219,8 +228,9 @@ func (p *RemoteIDParser) parseVendorIE(raw []byte) ([]types.DroneMessage, error)
 	return messages, nil
 }
 
-// findASTMMessageHeader 在 raw 中从 scanStart 开始扫描，查找 ASTM 消息 Header
-// Header: 高4位=消息类型(0-5), 低4位=协议版本(2)，即 byte 满足 (b>>4)<=5 && (b&0x0F)==2
+// findASTMMessageHeader 在 raw 中从 scanStart 开始扫描，查找 ASTM 或 GB 消息 Header
+// Header 格式: 高4位=消息类型(0-5), 低4位=协议版本(1=GB42590 或 2=ASTM)
+// 即 byte 满足 (b>>4)<=5 && ((b&0x0F)==1 || (b&0x0F)==2)
 // 最多扫描 8 字节（覆盖 Message Counter + 可能的额外元数据）
 func (p *RemoteIDParser) findASTMMessageHeader(raw []byte, scanStart int) int {
 	maxScan := scanStart + 8
@@ -231,21 +241,25 @@ func (p *RemoteIDParser) findASTMMessageHeader(raw []byte, scanStart int) int {
 		b := raw[i]
 		msgType := (b >> 4) & 0x0F
 		protoVer := b & 0x0F
-		if msgType <= 5 && protoVer == astmProtocolVersion {
+		// ASTM (protoVer=2) 或 GB (protoVer=1)
+		if msgType <= 5 && (protoVer == astmProtocolVersion || protoVer == gbProtocolVersion) {
 			return i
 		}
 		// 兼容旧版格式：高4位=协议版本, 低4位=消息类型
-		if msgType == astmProtocolVersion && protoVer <= 5 {
+		if (msgType == astmProtocolVersion || msgType == gbProtocolVersion) && protoVer <= 5 {
 			return i
 		}
 	}
 	return -1
 }
 
-// parseASTMBeaconMessages 解析 ASTM Beacon 格式的单条/多条消息
-// ASTM F3411-22a: 每条消息 25 字节
-//   byte 0: 高4位=消息类型(0-5), 低4位=协议版本(2)
-//   byte 1-24: 24字节载荷
+// parseASTMBeaconMessages 解析 Beacon 格式的单条/多条消息
+// 支持 ASTM F3411-22a 和 GB 42590-2023，通过 Header 字节的低4位区分：
+//
+//	低4位=1 → GB 42590-2023（字段偏移与 ASTM 不同）
+//	低4位=2 → ASTM F3411-22a
+//
+// 每条消息 25 字节: [Header:1B] [Payload:24B]
 func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMessage {
 	var messages []types.DroneMessage
 
@@ -254,12 +268,26 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 		msgData := payload[offset : offset+msgSize]
 		// 高4位=消息类型, 低4位=协议版本
 		msgType := (msgData[0] >> 4) & 0x0F
+		protoVer := msgData[0] & 0x0F
 
-		messageType, data := p.decodeASTMMessage(msgData, msgType)
+		var messageType string
+		var data map[string]string
+		var standard string
+
+		if protoVer == gbProtocolVersion {
+			// GB 42590-2023 格式
+			messageType, data = p.decodeGBMessage(msgData, msgType)
+			standard = "GB 42590-2023"
+		} else {
+			// ASTM F3411-22a 格式（默认，protoVer==2 或未知）
+			messageType, data = p.decodeASTMMessage(msgData, msgType)
+			standard = "ASTM F3411-22a"
+		}
+
 		if messageType != "" {
 			messages = append(messages, types.DroneMessage{
 				MessageType: messageType,
-				Standard:    "ASTM F3411-22a",
+				Standard:    standard,
 				Data:        data,
 				Source:      "ASTM",
 			})
@@ -526,6 +554,327 @@ func getASTMVerticalAccuracy(acc uint8) string {
 }
 
 func getASTMSpeedAccuracy(acc uint8) string {
+	switch acc {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "<10m/s"
+	case 2:
+		return "<3m/s"
+	case 3:
+		return "<1m/s"
+	case 4:
+		return "<0.3m/s"
+	default:
+		return fmt.Sprintf("Unknown(%d)", acc)
+	}
+}
+
+// ========== GB 42590-2023 消息解码 ==========
+//
+// GB 42590-2023 与 ASTM F3411-22a 使用相同的 OUI (FA:0B:BC + 0x0D)，
+// 但通过 Header 字节的低 4 位区分：GB=0x1, ASTM=0x2。
+//
+// 关键差异 — 字段偏移：
+//   ASTM Location: payload[0]=Status, [1]=Direction, [2]=SpeedH, [3]=SpeedV, [4:8]=Lat, [8:12]=Lon, [12:14]=AltBaro
+//   GB   Location: payload[0]=Flags(Status+DirHigh), [1]=DirLow, [2]=SpeedH, [3]=SpeedV, [4:8]=Lat, [8:12]=Lon, [12:14]=AltBaro
+//   （GB 和 ASTM 的 Location 字段偏移实际相同，差异在于方向编码方式）
+//
+//   ASTM System:   payload[0]=Flags, [1:5]=OpLat, [5:9]=OpLon, ...
+//   GB   System:   payload[0]=Flags, [1:5]=OpLat, [5:9]=OpLon, ...
+//   （GB 和 ASTM 的 System 字段偏移相同）
+//
+// GB 方向编码：12位(高4+低8) * 360.0 / 65535.0
+// ASTM 方向编码：8位 0-180 + EW 标志位
+
+// decodeGBMessage 解码 GB 42590-2023 单条消息
+// msgData 是完整的 25 字节消息: msgData[0]=Header, msgData[1:]=24字节载荷
+func (p *RemoteIDParser) decodeGBMessage(msgData []byte, msgType uint8) (string, map[string]string) {
+	payload := msgData[1:] // 跳过 Header 字节，24字节载荷
+	data := make(map[string]string)
+	var messageType string
+
+	switch msgType {
+	case 0: // Basic ID
+		messageType = "basic_id"
+		// GB Basic ID 与 ASTM 结构相同: payload[0] 高4位=ID Type, 低4位=UA Type
+		idType := (payload[0] >> 4) & 0x0F
+		uaType := payload[0] & 0x0F
+		data["uas_id"] = cleanString(payload[1:21], "UNKNOWN")
+		data["ua_type"] = getGBUATypeName(uaType)
+		data["id_type"] = getGBIDTypeName(idType)
+
+	case 1: // Location
+		messageType = "location"
+		p.decodeGBLocation(payload, data)
+
+	case 2: // Authentication
+		messageType = "authentication"
+
+	case 3: // Self ID
+		messageType = "self_id"
+		data["description"] = cleanString(payload[1:24], "")
+
+	case 4: // System
+		messageType = "system"
+		p.decodeGBSystem(payload, data)
+
+	case 5: // Operator ID
+		messageType = "operator_id"
+		data["operator_id"] = cleanString(payload[1:21], "")
+
+	default:
+		// 未知消息类型
+	}
+
+	return messageType, data
+}
+
+// decodeGBLocation 解码 GB 42590-2023 Location 消息
+//
+// GB Location 24字节载荷结构（与 ASTM 字段偏移相同，但方向编码方式不同）：
+//
+//	payload[0]: Status(高4位) | DirectionHigh(低4位)
+//	payload[1]: DirectionLow
+//	payload[2]: SpeedHorizontal
+//	payload[3]: SpeedVertical
+//	payload[4:8]: Latitude(int32 LE / 1e7)
+//	payload[8:12]: Longitude(int32 LE / 1e7)
+//	payload[12:14]: AltitudeBaro(uint16 LE * 0.5 - 1000)
+//	payload[14:16]: AltitudeGeo(uint16 LE * 0.5 - 1000)
+//	payload[16:18]: Height(uint16 LE * 0.5)
+//	payload[18]: VertAccuracy(高4位) | HorizAccuracy(低4位)
+//	payload[19]: BaroAccuracy(高4位) | SpeedAccuracy(低4位)
+//	payload[20:22]: TimeStamp(uint16 LE * 0.1)
+func (p *RemoteIDParser) decodeGBLocation(payload []byte, data map[string]string) {
+	if len(payload) < 22 {
+		return
+	}
+
+	status := (payload[0] >> 4) & 0x0F
+
+	// GB 方向编码：12位 (高4位在 payload[0] 低4位，低8位在 payload[1])
+	directionHigh := payload[0] & 0x0F
+	directionLow := payload[1]
+	directionRaw := (uint16(directionHigh) << 8) | uint16(directionLow)
+	var direction float64
+	if directionRaw != 0xFFFF {
+		direction = float64(directionRaw) * 360.0 / 65535.0
+	} else {
+		direction = -1 // 无效方向
+	}
+
+	speedH := float64(payload[2]) * 0.25
+	if payload[2] == 255 {
+		speedH = -1
+	}
+
+	// GB SpeedVertical: uint8 值减去 128 得到有符号速度
+	speedVRaw := int16(payload[3]) - 128
+	speedV := float64(speedVRaw) * 0.5
+	if payload[3] == 255 {
+		speedV = -999
+	}
+
+	latRaw := int32(binary.LittleEndian.Uint32(payload[4:8]))
+	var lat float64
+	if latRaw != 0x7FFFFFFF {
+		lat = float64(latRaw) / 10000000.0
+	} else {
+		lat = math.NaN()
+	}
+
+	lonRaw := int32(binary.LittleEndian.Uint32(payload[8:12]))
+	var lon float64
+	if lonRaw != 0x7FFFFFFF {
+		lon = float64(lonRaw) / 10000000.0
+	} else {
+		lon = math.NaN()
+	}
+
+	altRaw := binary.LittleEndian.Uint16(payload[12:14])
+	var altBaro float64
+	if altRaw != 0xFFFF {
+		altBaro = float64(altRaw)*0.5 - 1000.0
+	} else {
+		altBaro = math.NaN()
+	}
+
+	altGeoRaw := binary.LittleEndian.Uint16(payload[14:16])
+	var altGeo float64
+	if altGeoRaw != 0xFFFF {
+		altGeo = float64(altGeoRaw)*0.5 - 1000.0
+	} else {
+		altGeo = math.NaN()
+	}
+
+	heightRaw := binary.LittleEndian.Uint16(payload[16:18])
+	height := float64(heightRaw) * 0.5
+
+	data["status"] = getGBStatusName(status)
+	if direction >= 0 {
+		data["direction"] = fmt.Sprintf("%.2f", direction)
+	}
+	if speedH >= 0 {
+		data["speed_h"] = fmt.Sprintf("%.2f", speedH)
+	}
+	if speedV > -999 {
+		data["speed_v"] = fmt.Sprintf("%.2f", speedV)
+	}
+	if !math.IsNaN(lat) && math.Abs(lat) < 90.0 {
+		data["latitude"] = fmt.Sprintf("%.7f", lat)
+	}
+	if !math.IsNaN(lon) && math.Abs(lon) < 180.0 {
+		data["longitude"] = fmt.Sprintf("%.7f", lon)
+	}
+	if !math.IsNaN(altBaro) {
+		data["altitude_baro"] = fmt.Sprintf("%.2f", altBaro)
+	}
+	if !math.IsNaN(altGeo) {
+		data["altitude_geo"] = fmt.Sprintf("%.2f", altGeo)
+	}
+	data["height_m"] = fmt.Sprintf("%.2f", height)
+	// GB 没有 height_type 字段，默认 AboveTakeoff
+	data["height_type"] = "AboveTakeoff"
+	data["h_accuracy"] = getGBHorizontalAccuracy(payload[18] & 0x0F)
+	data["v_accuracy"] = getGBVerticalAccuracy((payload[18] >> 4) & 0x0F)
+	data["baro_accuracy"] = getGBVerticalAccuracy((payload[19] >> 4) & 0x0F)
+	data["s_accuracy"] = getGBSpeedAccuracy(payload[19] & 0x0F)
+	data["timestamp"] = fmt.Sprintf("%.1f", float64(binary.LittleEndian.Uint16(payload[20:22]))*0.1)
+}
+
+// decodeGBSystem 解码 GB 42590-2023 System 消息
+//
+// GB System 24字节载荷结构：
+//
+//	payload[0]: OperatorLocationType(高2位) | Classification(低3位)
+//	payload[1:5]: OperatorLatitude(int32 LE / 1e7)
+//	payload[5:9]: OperatorLongitude(int32 LE / 1e7)
+//	payload[9:11]: AreaCount(uint16 LE)
+//	payload[11]: AreaRadius(uint8)
+//	payload[12:14]: AreaCeiling(uint16 LE * 0.5 - 1000)
+//	payload[14:16]: AreaFloor(uint16 LE * 0.5 - 1000)
+//	payload[16:18]: OperatorAltitude(uint16 LE * 0.5 - 1000)
+func (p *RemoteIDParser) decodeGBSystem(payload []byte, data map[string]string) {
+	if len(payload) < 18 {
+		return
+	}
+	opLocType := (payload[0] >> 2) & 0x03
+	classification := payload[0] & 0x07
+
+	opLat := float64(int32(binary.LittleEndian.Uint32(payload[1:5]))) / 10000000.0
+	opLon := float64(int32(binary.LittleEndian.Uint32(payload[5:9]))) / 10000000.0
+	areaCount := binary.LittleEndian.Uint16(payload[9:11])
+	areaRadius := payload[11]
+	areaCeiling := float64(binary.LittleEndian.Uint16(payload[12:14]))*0.5 - 1000.0
+	areaFloor := float64(binary.LittleEndian.Uint16(payload[14:16]))*0.5 - 1000.0
+	opAlt := float64(binary.LittleEndian.Uint16(payload[16:18]))*0.5 - 1000.0
+
+	data["flags"] = fmt.Sprintf("0x%02X", payload[0])
+	data["operator_lat"] = fmt.Sprintf("%.7f", opLat)
+	data["operator_lon"] = fmt.Sprintf("%.7f", opLon)
+	data["operator_alt"] = fmt.Sprintf("%.2f", opAlt)
+	data["area_count"] = fmt.Sprintf("%d", areaCount)
+	data["area_radius_m"] = fmt.Sprintf("%d", areaRadius)
+	data["area_ceiling"] = fmt.Sprintf("%.2f", areaCeiling)
+	data["area_floor"] = fmt.Sprintf("%.2f", areaFloor)
+	data["operator_loc_type"] = getGBOperatorLocTypeName(opLocType)
+	data["classification"] = getGBClassificationName(classification)
+}
+
+// ========== GB 42590-2023 辅助函数 ==========
+
+func getGBUATypeName(uaType uint8) string {
+	names := []string{
+		"None/NotDeclared", "Aeroplane/FixedWing", "Helicopter/Multirotor", "Gyroplane",
+		"HybridLift", "Ornithopter", "Glider", "Kite",
+		"FreeBalloon", "CaptiveBalloon", "Airship",
+		"FreeFall/Parachute", "Rocket", "TetheredPowered",
+		"GroundObstacle", "Other",
+	}
+	if int(uaType) < len(names) {
+		return names[uaType]
+	}
+	return fmt.Sprintf("Unknown(%d)", uaType)
+}
+
+func getGBIDTypeName(idType uint8) string {
+	names := []string{
+		"None", "SerialNumber", "CAARegistrationID",
+		"UTMAssignedUUID", "SpecificSessionID",
+	}
+	if int(idType) < len(names) {
+		return names[idType]
+	}
+	return fmt.Sprintf("Unknown(%d)", idType)
+}
+
+func getGBStatusName(status uint8) string {
+	names := []string{
+		"Undeclared", "Ground", "Airborne",
+		"Emergency", "RemoteIDSystemFailure",
+	}
+	if int(status) < len(names) {
+		return names[status]
+	}
+	return fmt.Sprintf("Unknown(%d)", status)
+}
+
+func getGBClassificationName(classification uint8) string {
+	names := []string{
+		"Undefined", "USA", "China",
+		"EU", "UK", "Japan", "Australia", "Other",
+	}
+	if int(classification) < len(names) {
+		return names[classification]
+	}
+	return fmt.Sprintf("Unknown(%d)", classification)
+}
+
+func getGBOperatorLocTypeName(opLocType uint8) string {
+	switch opLocType {
+	case 0:
+		return "TakeOff"
+	case 1:
+		return "Dynamic"
+	case 2:
+		return "Fixed"
+	default:
+		return fmt.Sprintf("Reserved(%d)", opLocType)
+	}
+}
+
+func getGBHorizontalAccuracy(acc uint8) string {
+	switch acc {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "<10m"
+	case 2:
+		return "<3m"
+	case 3:
+		return "<1m"
+	default:
+		return fmt.Sprintf("Unknown(%d)", acc)
+	}
+}
+
+func getGBVerticalAccuracy(acc uint8) string {
+	switch acc {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "<10m"
+	case 2:
+		return "<3m"
+	case 3:
+		return "<1m"
+	default:
+		return fmt.Sprintf("Unknown(%d)", acc)
+	}
+}
+
+func getGBSpeedAccuracy(acc uint8) string {
 	switch acc {
 	case 0:
 		return "Unknown"

@@ -425,6 +425,10 @@ func (s *Sniffer) detectBeaconOUI(raw []byte) string {
 // 以及旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)，
 // 验证消息格式有效性。
 //
+// 支持协议版本：
+//   低4位=1 → GB 42590-2023
+//   低4位=2 → ASTM F3411-22a
+//
 // Vendor Specific IE 结构:
 //
 //	[Element ID: 0xDD] [Len] [OUI: FA:0B:BC] [Vend Type: 0x0D] [Message Counter: 1B] [Messages...]
@@ -432,7 +436,7 @@ func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 	for i := 0; i < len(raw)-4; i++ {
 		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
 		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC && raw[i+3] == 0x0D {
-			// 在 OUI+Type 之后扫描查找 ASTM 消息 Header（最多 8 字节）
+			// 在 OUI+Type 之后扫描查找 ASTM/GB 消息 Header（最多 8 字节）
 			scanStart := i + 4
 			maxScan := scanStart + 8
 			if maxScan > len(raw) {
@@ -442,7 +446,9 @@ func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 				b := raw[j]
 				msgType := (b >> 4) & 0x0F
 				protoVer := b & 0x0F
-				if (msgType <= 5 && protoVer == 2) || (msgType == 2 && protoVer <= 5) {
+				// ASTM (protoVer=2) 或 GB (protoVer=1)
+				if (msgType <= 5 && (protoVer == 2 || protoVer == 1)) ||
+					((protoVer == 2 || protoVer == 1) && msgType <= 5) {
 					return true
 				}
 			}
@@ -459,7 +465,8 @@ func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 				b := raw[j]
 				msgType := (b >> 4) & 0x0F
 				protoVer := b & 0x0F
-				if (msgType <= 5 && protoVer == 2) || (msgType == 2 && protoVer <= 5) {
+				if (msgType <= 5 && (protoVer == 2 || protoVer == 1)) ||
+					((protoVer == 2 || protoVer == 1) && msgType <= 5) {
 					return true
 				}
 			}

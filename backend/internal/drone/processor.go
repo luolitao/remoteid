@@ -382,6 +382,12 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 				drone.Altitude = f
 			}
 		}
+		// 高度合理性检查：无人机限高通常不超过 500 米（模拟器信号不超过 120 米）
+		// 如果高度超过 5000 米，很可能是解析错误，标记为无效
+		if drone.Altitude > 5000 || drone.Altitude < -500 {
+			slog.Warn("高度数据异常，可能是协议解析错误", "mac", drone.MAC, "altitude", drone.Altitude, "standard", msg.Standard)
+			drone.Altitude = 0
+		}
 		if speed, ok := msg.Data["speed_h"]; ok {
 			if f, err := strconv.ParseFloat(speed, 64); err == nil {
 				drone.Speed = f
