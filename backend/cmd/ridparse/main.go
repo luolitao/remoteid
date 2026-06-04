@@ -584,7 +584,16 @@ func isValidRemoteID(raw []byte) bool {
 		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
 		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
 			if i+5 < len(raw) && raw[i+3] == 0x0D {
-				// 跳过 OUI(3B) + VendType(1B) + Message Counter(1B) = 5 字节
+				dataStart := i + 4
+
+				// 策略 1: GB 46750-2023 检测 (data[1]==0xFF 且版本号高3位==0x1)
+				if dataStart+7 <= len(raw) &&
+					raw[dataStart+1] == 0xFF &&
+					((raw[dataStart+2]>>5)&0x07) == 0x1 {
+					return true
+				}
+
+				// 策略 2: 跳过 OUI(3B) + VendType(1B) + Message Counter(1B) = 5 字节
 				payload := raw[i+5:]
 				if len(payload) < 1 {
 					continue

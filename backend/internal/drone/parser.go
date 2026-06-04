@@ -29,6 +29,13 @@ import (
 //     - 协议版本 nibble = 0x1（区别于 ASTM 的 0x2）
 //     - 字段偏移与 ASTM 不同：Location/System 消息比 ASTM 多 1 字节偏移
 //     - 支持 Packed 格式（消息类型 0xF）
+//
+//  GB 46750-2023（中国国标）
+//     - 复用 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
+//     - 完全自定义的变长消息格式（非 25 字节固定消息）
+//     - 通过 data[1]==0xFF 识别（区别于 ASTM 的 Header 和 GB 42590 的 0xF1）
+//     - 格式: [MessageCounter:1B] [0xFF:1B] [版本号:1B] [数据长度:1B] [数据标识:3B] [数据内容:变长]
+//     - 数据标识位表定义 21 个数据项，按需组合
 
 const (
 	// ASTM/ASD-STAN Vendor Specific IE OUI
@@ -45,6 +52,10 @@ const (
 
 	// GB 42590-2023 常量
 	gbProtocolVersion = 1 // GB 42590-2023 协议版本号（字节 0 高 4 位）
+
+	// GB 46750-2023 常量
+	gb46750Magic        = 0xFF // GB 46750 数据类型标识魔数（data[1]）
+	gb46750MajorVersion = 0x1  // GB 46750 主版本号（版本字节高3位）
 )
 
 type RemoteIDParser struct{}
@@ -171,12 +182,17 @@ func (p *RemoteIDParser) parseNANAttributes(raw []byte, offset int) []types.Dron
 
 // parseVendorIE 解析 Vendor Specific IE 中的 Remote ID 消息
 //
-// ASTM/ASD-STAN Vendor Specific IE 结构:
+// 支持三种协议格式（均使用 OUI: FA:0B:BC + OUI_Type: 0x0D）：
 //
-//	[Element ID: 0xDD] [Len] [OUI: FA:0B:BC] [Vend Type: 0x0D] [MsgCounter: 1B] [Messages...]
+//  1. GB 46750-2023: data[1]==0xFF，变长自定义格式
+//     格式: [MsgCounter:1B] [0xFF:1B] [版本:1B] [数据长度:1B] [数据标识:3B] [数据内容:变长]
 //
-// 每条消息 25 字节: [Header:1B] [Payload:24B]
-// Header: 高4位=消息类型(0-5), 低4位=协议版本(2)
+//  2. ASTM F3411-22a / GB 42590-2023: 固定 25 字节消息
+//     Header: 高4位=消息类型(0-5), 低4位=协议版本(1=GB, 2=ASTM)
+//
+//  3. 旧版 ASTM (OUI: 06:05:04 + 0xFD)
+//
+// 检测策略：先检测 GB 46750 (data[1]==0xFF)，再查找 ASTM/GB 消息 Header
 func (p *RemoteIDParser) parseVendorIE(raw []byte) ([]types.DroneMessage, error) {
 	var messages []types.DroneMessage
 
@@ -186,20 +202,30 @@ func (p *RemoteIDParser) parseVendorIE(raw []byte) ([]types.DroneMessage, error)
 			continue
 		}
 
-		// 在 OUI+Type 之后扫描查找 ASTM 消息 Header
-		// Header: 高4位=消息类型(0-5), 低4位=协议版本(2)
-		// 某些实现会在 OUI+Type 和消息之间插入额外的元数据字节
-		scanStart := idx + 4 // OUI+Type 之后
-		msgStart := p.findASTMMessageHeader(raw, scanStart)
-		if msgStart < 0 {
+		// OUI+Type 之后的数据: [MsgCounter:1B] [payload...]
+		dataStart := idx + 4 // OUI+Type 之后
+		if dataStart >= len(raw) {
 			continue
 		}
 
-		payload := raw[msgStart:]
-		msgs := p.parseASTMBeaconMessages(payload)
-		messages = append(messages, msgs...)
-		if len(messages) > 0 {
-			break
+		// 策略 1: 检测 GB 46750-2023 格式 (data[1]==0xFF)
+		if p.isGB46750Format(raw, dataStart) {
+			msgs := p.parseGB46750Payload(raw[dataStart:])
+			messages = append(messages, msgs...)
+			if len(messages) > 0 {
+				break
+			}
+		}
+
+		// 策略 2: 查找 ASTM/GB 消息 Header
+		msgStart := p.findASTMMessageHeader(raw, dataStart)
+		if msgStart >= 0 {
+			payload := raw[msgStart:]
+			msgs := p.parseASTMBeaconMessages(payload)
+			messages = append(messages, msgs...)
+			if len(messages) > 0 {
+				break
+			}
 		}
 	}
 
@@ -226,6 +252,27 @@ func (p *RemoteIDParser) parseVendorIE(raw []byte) ([]types.DroneMessage, error)
 	}
 
 	return messages, nil
+}
+
+// isGB46750Format 检测数据是否为 GB 46750-2023 格式
+// data 从 OUI+Type 之后开始（包含 Message Counter）
+// GB 46750 格式: [MsgCounter:1B] [0xFF:1B] [版本号:1B] [数据长度:1B] [数据标识:3B] [数据内容:变长]
+// 检测条件: data[1]==0xFF 且版本号高3位==0x1 且长度足够
+func (p *RemoteIDParser) isGB46750Format(raw []byte, dataStart int) bool {
+	if dataStart+7 > len(raw) {
+		return false
+	}
+	// data[1] == 0xFF (魔数)
+	if raw[dataStart+1] != gb46750Magic {
+		return false
+	}
+	// 版本号高3位 == 0x1
+	version := raw[dataStart+2]
+	majorVer := (version >> 5) & 0x07
+	if majorVer != gb46750MajorVersion {
+		return false
+	}
+	return true
 }
 
 // findASTMMessageHeader 在 raw 中从 scanStart 开始扫描，查找 ASTM 或 GB 消息 Header
@@ -886,6 +933,345 @@ func getGBSpeedAccuracy(acc uint8) string {
 		return "<1m/s"
 	case 4:
 		return "<0.3m/s"
+	default:
+		return fmt.Sprintf("Unknown(%d)", acc)
+	}
+}
+
+// ========== GB 46750-2023 消息解码 ==========
+//
+// GB 46750-2023 使用与 ASTM/GB 42590 相同的 OUI (FA:0B:BC + 0x0D)，
+// 但采用完全不同的变长自定义消息格式。
+//
+// Wire 格式:
+//
+//	[MessageCounter:1B] [0xFF:1B] [版本号:1B] [数据内容长度:1B] [数据标识:3B] [数据内容:变长]
+//
+// 版本号: 高3位=主版本(0x1), 低5位=子版本
+// 数据标识: 固定 3 字节，每位表示一个数据项是否存在（bit7→bit1，bit0=扩展标志）
+// 数据内容: 按标识位从高到低、标识字节从左到右的顺序排列
+//
+// 数据项定义（21 项）：
+//
+//	标识字节1: 001 唯一产品识别码(20B) / 002 实名登记标志(8B) / 003 运行类别(1B) /
+//	          004 无人机分类(1B) / 005 遥控站位置类型(1B) / 006 遥控站位置(8B) / 007 遥控站高度(2B)
+//	标识字节2: 008 无人机位置(8B) / 009 航迹角(2B) / 010 地速(2B) / 011 相对高度(2B) /
+//	          012 垂直速度(1B) / 013 大地高度(2B) / 014 气压高度(2B)
+//	标识字节3: 015 运行状态(1B) / 016 坐标系类型(1B) / 017 水平精度(1B) /
+//	          018 垂直精度(1B) / 019 速度精度(1B) / 020 时间戳(6B) / 021 时间戳精度(1B)
+
+// parseGB46750Payload 解析 GB 46750-2023 格式的 payload
+// payload 从 Message Counter 开始: [MsgCounter:1B] [0xFF:1B] [版本号:1B] [数据长度:1B] [数据标识:3B] [数据内容:变长]
+// 返回一个 DroneMessage，包含所有解析出的数据项
+func (p *RemoteIDParser) parseGB46750Payload(payload []byte) []types.DroneMessage {
+	if len(payload) < 7 {
+		return nil
+	}
+
+	version := payload[2]
+	majorVer := (version >> 5) & 0x07
+	minorVer := version & 0x1F
+
+	contentLen := int(payload[3]) // 数据内容长度（字节数）
+	flags := payload[4:7]         // 3 字节数据标识
+	content := payload[7:]        // 数据内容起始
+
+	if len(content) < contentLen {
+		contentLen = len(content)
+	}
+
+	data := make(map[string]string)
+	data["gb46750_version"] = fmt.Sprintf("%d.%d", majorVer, minorVer)
+	data["msg_counter"] = fmt.Sprintf("%d", payload[0])
+
+	// 解析数据标识位表
+	p.decodeGB46750Fields(flags, content[:contentLen], data)
+
+	return []types.DroneMessage{
+		{
+			MessageType: "gb46750",
+			Standard:    "GB 46750-2023",
+			Data:        data,
+			Source:      "ASTM",
+		},
+	}
+}
+
+// decodeGB46750Fields 根据数据标识位表解析 GB 46750 数据内容
+// flags: 3 字节数据标识
+// content: 数据内容字节
+// data: 输出 map
+func (p *RemoteIDParser) decodeGB46750Fields(flags []byte, content []byte, data map[string]string) {
+	if len(flags) < 3 {
+		return
+	}
+
+	offset := 0
+	contentLen := len(content)
+
+	// 按标识字节顺序解析（3 个字节）
+	for byteIdx := 0; byteIdx < 3 && byteIdx < len(flags); byteIdx++ {
+		flag := flags[byteIdx]
+
+		// 按位从高到低 (bit7→bit1)，bit0 是扩展标志位
+		for bit := 7; bit >= 1; bit-- {
+			if (flag & (1 << bit)) == 0 {
+				continue
+			}
+			if offset >= contentLen {
+				return
+			}
+
+			switch {
+			case byteIdx == 0:
+				// ---- 标识字节1 ----
+				switch bit {
+				case 7: // 0x80: 001 唯一产品识别码 (M) — 20字节 ASCII 大端序
+					if offset+20 <= contentLen {
+						data["unique_id"] = cleanString(content[offset:offset+20], "")
+						offset += 20
+					}
+				case 6: // 0x40: 002 实名登记标志 (M) — 8字节 ASCII 大端序
+					if offset+8 <= contentLen {
+						data["realname_id"] = cleanString(content[offset:offset+8], "")
+						offset += 8
+					}
+				case 5: // 0x20: 003 运行类别 (O) — 1 字节
+					data["operation_category"] = fmt.Sprintf("%d", content[offset])
+					offset += 1
+				case 4: // 0x10: 004 无人机分类 (M) — 1 字节
+					data["ua_category"] = getGB46750UACategoryName(content[offset])
+					offset += 1
+				case 3: // 0x08: 005 遥控站位置类型 (M) — 1 字节
+					data["rcs_loc_type"] = getGB46750RCSLocTypeName(content[offset])
+					offset += 1
+				case 2: // 0x04: 006 遥控站位置 (M) — 8字节 LE int32×1e7 (lat|lon)
+					if offset+8 <= contentLen {
+						rcsLat := float64(int32(binary.LittleEndian.Uint32(content[offset:offset+4]))) / 10000000.0
+						rcsLon := float64(int32(binary.LittleEndian.Uint32(content[offset+4:offset+8]))) / 10000000.0
+						if math.Abs(rcsLat) < 90.0 {
+							data["rcs_latitude"] = fmt.Sprintf("%.7f", rcsLat)
+						}
+						if math.Abs(rcsLon) < 180.0 {
+							data["rcs_longitude"] = fmt.Sprintf("%.7f", rcsLon)
+						}
+						offset += 8
+					}
+				case 1: // 0x02: 007 遥控站高度 (M) — 2字节 LE (val+1000)×2
+					if offset+2 <= contentLen {
+						raw := binary.LittleEndian.Uint16(content[offset : offset+2])
+						if raw != 0 {
+							alt := float64(raw)/2.0 - 1000.0
+							data["rcs_altitude"] = fmt.Sprintf("%.2f", alt)
+						}
+						offset += 2
+					}
+				}
+
+			case byteIdx == 1:
+				// ---- 标识字节2 ----
+				switch bit {
+				case 7: // 0x80: 008 无人机位置 (M) — 8字节 LE int32×1e7 (lat|lon)
+					if offset+8 <= contentLen {
+						uavLat := float64(int32(binary.LittleEndian.Uint32(content[offset:offset+4]))) / 10000000.0
+						uavLon := float64(int32(binary.LittleEndian.Uint32(content[offset+4:offset+8]))) / 10000000.0
+						if math.Abs(uavLat) < 90.0 {
+							data["latitude"] = fmt.Sprintf("%.7f", uavLat)
+						}
+						if math.Abs(uavLon) < 180.0 {
+							data["longitude"] = fmt.Sprintf("%.7f", uavLon)
+						}
+						offset += 8
+					}
+				case 6: // 0x40: 009 航迹角 (M) — 2字节 LE uint16 × 0.1° 分辨率
+					if offset+2 <= contentLen {
+						raw := binary.LittleEndian.Uint16(content[offset : offset+2])
+						if raw != 0xFFFF {
+							angle := float64(raw) / 10.0
+							data["direction"] = fmt.Sprintf("%.2f", angle)
+						}
+						offset += 2
+					}
+				case 5: // 0x20: 010 地速 (M) — 2字节 LE uint16 × 0.1m/s 分辨率
+					if offset+2 <= contentLen {
+						raw := binary.LittleEndian.Uint16(content[offset : offset+2])
+						if raw != 0xFFFF {
+							speed := float64(raw) / 10.0
+							data["speed_h"] = fmt.Sprintf("%.2f", speed)
+						}
+						offset += 2
+					}
+				case 4: // 0x10: 011 相对高度 (O) — 2字节 LE (val+9000)×2
+					if offset+2 <= contentLen {
+						raw := binary.LittleEndian.Uint16(content[offset : offset+2])
+						if raw != 0 {
+							height := float64(raw)/2.0 - 9000.0
+							data["height_m"] = fmt.Sprintf("%.2f", height)
+							data["height_type"] = "AboveTakeoff"
+						}
+						offset += 2
+					}
+				case 3: // 0x08: 012 垂直速度 (O) — 1字节，bit7=方向(0上升/1下降)，bit6-0=实际值×2
+					raw := content[offset]
+					if raw != 0xFF {
+						v := float64(raw&0x7F) / 2.0
+						if (raw & 0x80) != 0 {
+							v = -v
+						}
+						data["speed_v"] = fmt.Sprintf("%.2f", v)
+					}
+					offset += 1
+				case 2: // 0x04: 013 大地高度 (M) — 2字节 LE (val+1000)×2
+					if offset+2 <= contentLen {
+						raw := binary.LittleEndian.Uint16(content[offset : offset+2])
+						if raw != 0 {
+							alt := float64(raw)/2.0 - 1000.0
+							data["altitude_geo"] = fmt.Sprintf("%.2f", alt)
+						}
+						offset += 2
+					}
+				case 1: // 0x02: 014 气压高度 (O) — 2字节 LE (val+1000)×2
+					if offset+2 <= contentLen {
+						raw := binary.LittleEndian.Uint16(content[offset : offset+2])
+						if raw != 0 {
+							alt := float64(raw)/2.0 - 1000.0
+							data["altitude_baro"] = fmt.Sprintf("%.2f", alt)
+						}
+						offset += 2
+					}
+				}
+
+			case byteIdx == 2:
+				// ---- 标识字节3 ----
+				switch bit {
+				case 7: // 0x80: 015 运行状态 (M) — 1 字节
+					data["status"] = getGB46750StatusName(content[offset])
+					offset += 1
+				case 6: // 0x40: 016 坐标系类型 (M) — 1 字节
+					data["coord_system"] = getGB46750CoordSystemName(content[offset])
+					offset += 1
+				case 5: // 0x20: 017 水平精度 (M) — 1 字节
+					data["h_accuracy"] = getGB46750AccuracyName(content[offset])
+					offset += 1
+				case 4: // 0x10: 018 垂直精度 (M) — 1 字节
+					data["v_accuracy"] = getGB46750AccuracyName(content[offset])
+					offset += 1
+				case 3: // 0x08: 019 速度精度 (M) — 1 字节
+					data["s_accuracy"] = getGB46750AccuracyName(content[offset])
+					offset += 1
+				case 2: // 0x04: 020 时间戳 (M) — 6字节 LE Unix 毫秒时间戳
+					if offset+6 <= contentLen {
+						var ts uint64
+						for i := 0; i < 6; i++ {
+							ts |= uint64(content[offset+i]) << (i * 8)
+						}
+						data["timestamp_ms"] = fmt.Sprintf("%d", ts)
+						// 同时转换为秒级时间戳字符串（用于 location timestamp）
+						data["timestamp"] = fmt.Sprintf("%.1f", float64(ts)/1000.0)
+						offset += 6
+					}
+				case 1: // 0x02: 021 时间戳精度 (M) — 1 字节
+					data["ts_accuracy"] = getGB46750TSAccuracyName(content[offset])
+					offset += 1
+				}
+			}
+		}
+	}
+}
+
+// ========== GB 46750-2023 辅助函数 ==========
+
+func getGB46750UACategoryName(cat uint8) string {
+	// GB 46750 民用无人驾驶航空器分类
+	names := []string{
+		"微型(0)", "轻型(1)", "小型(2)", "中型(3)", "大型(4)",
+	}
+	if int(cat) < len(names) {
+		return names[cat]
+	}
+	return fmt.Sprintf("Unknown(%d)", cat)
+}
+
+func getGB46750RCSLocTypeName(t uint8) string {
+	switch t {
+	case 0:
+		return "TakeOff"
+	case 1:
+		return "Dynamic"
+	case 2:
+		return "Fixed"
+	default:
+		return fmt.Sprintf("Reserved(%d)", t)
+	}
+}
+
+func getGB46750StatusName(status uint8) string {
+	switch status {
+	case 0:
+		return "Undeclared"
+	case 1:
+		return "Ground"
+	case 2:
+		return "Airborne"
+	case 3:
+		return "Emergency"
+	default:
+		return fmt.Sprintf("Unknown(%d)", status)
+	}
+}
+
+func getGB46750CoordSystemName(cs uint8) string {
+	switch cs {
+	case 0:
+		return "WGS84"
+	case 1:
+		return "CGCS2000"
+	default:
+		return fmt.Sprintf("Unknown(%d)", cs)
+	}
+}
+
+func getGB46750AccuracyName(acc uint8) string {
+	switch acc {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "<10m"
+	case 2:
+		return "<3m"
+	case 3:
+		return "<1m"
+	case 4:
+		return "<0.3m"
+	default:
+		return fmt.Sprintf("Unknown(%d)", acc)
+	}
+}
+
+func getGB46750TSAccuracyName(acc uint8) string {
+	switch acc {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "<0.1s"
+	case 2:
+		return "<0.2s"
+	case 3:
+		return "<0.3s"
+	case 4:
+		return "<0.4s"
+	case 5:
+		return "<0.5s"
+	case 6:
+		return "<1s"
+	case 7:
+		return "<2s"
+	case 8:
+		return "<3s"
+	case 9:
+		return "<4s"
+	case 10:
+		return "<5s"
 	default:
 		return fmt.Sprintf("Unknown(%d)", acc)
 	}

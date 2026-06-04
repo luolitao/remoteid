@@ -1,10 +1,10 @@
 # Remote ID Monitor — 无人机远程识别监控系统
 
-基于 WiFi 抓包的无人机 Remote ID 监控系统，支持 **ASTM F3411-22a / ASD-STAN**（国际标准）协议。部署于树莓派，通过 2.4GHz WiFi 监控模式实时捕获无人机 Beacon 帧和 NAN Service Discovery Frame 中 Vendor Specific IE 的身份和位置信息。
+基于 WiFi 抓包的无人机 Remote ID 监控系统，支持 **ASTM F3411-22a / ASD-STAN**（国际标准）、**GB 42590-2023**（中国国标）和 **GB 46750-2023**（中国国标变长格式）三种协议。部署于树莓派，通过 2.4GHz WiFi 监控模式实时捕获无人机 Beacon 帧和 NAN Service Discovery Frame 中 Vendor Specific IE 的身份和位置信息。
 
 ## 功能特性
 
-- **ASTM/ASD-STAN 协议支持**：解析 ASTM F3411-22a / ASD-STAN prEN 4709-002 标准
+- **多协议支持**：ASTM F3411-22a / ASD-STAN prEN 4709-002 + GB 42590-2023 + GB 46750-2023
 - **实时监控**：WebSocket 推送无人机位置、身份、高度、速度等数据
 - **TUI 命令行工具**：终端内卡片式展示无人机实时状态，支持本地开发机远程连接
 - **离线分析**：支持 pcap/pcapng 文件离线解析
@@ -152,18 +152,40 @@ debug:
 
 ## 协议说明
 
+三种协议均使用相同的 **Vendor Specific IE** (IEEE 802.11 Element ID `0xDD`)，通过 **OUI** `FA:0B:BC` + **OUI_Type** `0x0D` 承载 Remote ID 数据，自动区分：
+
+| 协议 | 识别方式 | 消息格式 |
+|------|---------|---------|
+| **ASTM F3411-22a** | Header 低4位=`0x2` | 25 字节固定消息（5 种类型） |
+| **GB 42590-2023** | Header 低4位=`0x1` | 25 字节固定消息（方向 12 位编码） |
+| **GB 46750-2023** | `data[1]==0xFF` | 变长自定义格式（21 项数据标识位表） |
+
 ### ASTM F3411-22a / ASD-STAN prEN 4709-002
 
-ASTM/ASD-STAN 通过 **Vendor Specific IE** (IEEE 802.11 Element ID `0xDD`) 承载 Remote ID 数据：
-
-- **OUI**: `FA:0B:BC` (ASD-STAN)，**OUI_Type**: `0x0D`
-- 协议版本：`2`（字节 0 高 4 位）
+- 协议版本：`2`（Header 字节低 4 位）
 - 消息类型：Basic ID / Location / Authentication / Self ID / System / Operator ID（类型 0-5）
-- 编码特点：经纬度均为 4 字节 int32 little-endian，缩放因子 1e-7
-- 每条消息固定 25 字节（1 字节 header + 24 字节 payload）
-- Location 消息字段：Status(4bit) + Direction(1B) + SpeedH(1B) + SpeedV(1B) + Lat(4B LE) + Lon(4B LE) + AltBaro(2B LE) + AltGeo(2B LE) + Height(2B LE) + Accuracy(3B) + Timestamp(2B LE)
+- 经纬度：4 字节 int32 LE × 1e-7
+- Location 消息：Status(4bit) + Direction(1B, 0-180° + EW 标志) + SpeedH(1B) + SpeedV(1B) + Lat(4B LE) + Lon(4B LE) + AltBaro(2B LE) + AltGeo(2B LE) + Height(2B LE) + Accuracy(3B) + Timestamp(2B LE)
+
+### GB 42590-2023
+
+- 协议版本：`1`（Header 字节低 4 位），与 ASTM 共用 OUI
+- 方向编码：12 位（高 4 位在 flags 低 4 位 + 低 8 位单独字节）× 360/65535
+- 无效值定义：`0xFFFF`=无效方向，`0x7FFFFFFF`=无效坐标，`0xFFFF`=无效高度
+- 支持 Packed 格式（消息类型 `0xF`）
+
+### GB 46750-2023
+
+- 识别魔数：`data[1] == 0xFF`，版本号高 3 位=`0x1`
+- Wire 格式：`[MsgCounter:1B] [0xFF:1B] [版本:1B] [数据长度:1B] [数据标识:3B] [数据内容:变长]`
+- 数据标识位表：3 字节 × 7 位 = 21 个数据项（001-021），按需组合
+- 高度编码：`(raw/2.0) - 1000.0`（大地/气压/遥控站）或 `(raw/2.0) - 9000.0`（相对高度）
+- 方向编码：2 字节 uint16 LE × 0.1°
+- 时间戳：6 字节 LE Unix 毫秒
 
 ### NAN Service Discovery
+
+通过 Action Frame (subtype 13) 承载，Wi-Fi Alliance OUI `50:6F:9A` 内嵌 Remote ID 数据。
 
 ## 许可证
 

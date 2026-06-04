@@ -470,6 +470,134 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 				drone.AreaRadiusM = r
 			}
 		}
+	// GB 46750-2023: 所有数据在一个消息中，字段名不同于 ASTM/GB 42590
+	case "gb46750":
+		drone.Standard = msg.Standard
+		drone.Source = msg.Source
+
+		// Basic ID 映射：唯一产品识别码
+		if uasID, ok := msg.Data["unique_id"]; ok && uasID != "" {
+			drone.UASID = uasID
+		}
+		// 实名登记标志作为 OperatorID
+		if realnameID, ok := msg.Data["realname_id"]; ok && realnameID != "" {
+			drone.OperatorID = realnameID
+		}
+		// 无人机分类
+		if uaCat, ok := msg.Data["ua_category"]; ok {
+			drone.UAType = uaCat
+		}
+		drone.IDType = "SerialNumber"
+
+		// Location 映射：无人机位置
+		if lat, ok := msg.Data["latitude"]; ok {
+			if f, err := strconv.ParseFloat(lat, 64); err == nil {
+				drone.Latitude = f
+			}
+		}
+		if lng, ok := msg.Data["longitude"]; ok {
+			if f, err := strconv.ParseFloat(lng, 64); err == nil {
+				drone.Longitude = f
+			}
+		}
+		// 高度：优先气压高度，其次大地高度，最后相对高度
+		if alt, ok := msg.Data["altitude_baro"]; ok {
+			if f, err := strconv.ParseFloat(alt, 64); err == nil {
+				drone.Altitude = f
+			}
+		} else if alt, ok := msg.Data["altitude_geo"]; ok {
+			if f, err := strconv.ParseFloat(alt, 64); err == nil {
+				drone.Altitude = f
+			}
+		} else if height, ok := msg.Data["height_m"]; ok {
+			if f, err := strconv.ParseFloat(height, 64); err == nil {
+				drone.Altitude = f
+			}
+		}
+		// 高度合理性检查
+		if drone.Altitude > 5000 || drone.Altitude < -500 {
+			slog.Warn("高度数据异常，可能是协议解析错误", "mac", drone.MAC, "altitude", drone.Altitude, "standard", msg.Standard)
+			drone.Altitude = 0
+		}
+		// 地速
+		if speed, ok := msg.Data["speed_h"]; ok {
+			if f, err := strconv.ParseFloat(speed, 64); err == nil {
+				drone.Speed = f
+			}
+		}
+		// 垂直速度
+		if speedV, ok := msg.Data["speed_v"]; ok {
+			if f, err := strconv.ParseFloat(speedV, 64); err == nil {
+				drone.SpeedVertical = f
+			}
+		}
+		// 航迹角
+		if heading, ok := msg.Data["direction"]; ok {
+			if f, err := strconv.ParseFloat(heading, 64); err == nil {
+				drone.Heading = f
+			}
+		}
+		// 运行状态
+		if status, ok := msg.Data["status"]; ok {
+			drone.FlightStatus = status
+		}
+		// 高度类型
+		if ht, ok := msg.Data["height_type"]; ok {
+			drone.HeightType = ht
+		}
+		// 精度信息
+		if ha, ok := msg.Data["h_accuracy"]; ok {
+			drone.HAccuracy = ha
+		}
+		if va, ok := msg.Data["v_accuracy"]; ok {
+			drone.VAccuracy = va
+		}
+		if sa, ok := msg.Data["s_accuracy"]; ok {
+			drone.SAccuracy = sa
+		}
+		// 时间戳（GB 46750 使用 Unix 毫秒）
+		if ts, ok := msg.Data["timestamp"]; ok {
+			drone.LocationTimestamp = ts
+		}
+
+		// System 映射：遥控站信息
+		if rcsLat, ok := msg.Data["rcs_latitude"]; ok {
+			if f, err := strconv.ParseFloat(rcsLat, 64); err == nil {
+				drone.OperatorLatitude = f
+			}
+		}
+		if rcsLon, ok := msg.Data["rcs_longitude"]; ok {
+			if f, err := strconv.ParseFloat(rcsLon, 64); err == nil {
+				drone.OperatorLongitude = f
+			}
+		}
+		if rcsAlt, ok := msg.Data["rcs_altitude"]; ok {
+			if f, err := strconv.ParseFloat(rcsAlt, 64); err == nil {
+				drone.OperatorAltitude = f
+			}
+		}
+		// 运行类别
+		if opCat, ok := msg.Data["operation_category"]; ok {
+			drone.Classification = "GB46750-Cat" + opCat
+		}
+
+		// 添加位置到轨迹
+		if drone.Latitude != 0 || drone.Longitude != 0 {
+			pos := &types.Position{
+				Latitude:  drone.Latitude,
+				Longitude: drone.Longitude,
+				Altitude:  drone.Altitude,
+				Speed:     drone.Speed,
+				Heading:   drone.Heading,
+				Timestamp: time.Now(),
+			}
+			p.positions[drone.MAC] = append(p.positions[drone.MAC], pos)
+
+			// 保存位置到数据库
+			if err := db.SavePosition(drone.MAC, pos, drone.Standard); err != nil {
+				slog.Warn("保存位置数据失败", "mac", drone.MAC, "error", err)
+			}
+		}
 	}
 }
 

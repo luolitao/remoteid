@@ -201,14 +201,12 @@ func (s *Sniffer) logStats() {
 }
 
 func (s *Sniffer) processPacket(packet gopacket.Packet) {
-	// 检查 RadioTap 层（信号强度 + 频段信息）
+	// 检查 RadioTap 层（信号强度）
 	radioTapLayer := packet.Layer(layers.LayerTypeRadioTap)
 	var signalStrength int = defaultSignalStrength
-	var freqMHz uint16
 	if radioTapLayer != nil {
 		if radioTap, ok := radioTapLayer.(*layers.RadioTap); ok {
 			signalStrength = int(radioTap.DBMAntennaSignal)
-			freqMHz = uint16(radioTap.ChannelFrequency)
 		}
 	}
 
@@ -315,37 +313,16 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 
 	// 根据帧类型选择检测方式
 	var deviceType string
-	var detectedOUI string
 	if frameSubtype == 13 {
 		// Action Frame: 检测 NAN SDF (Wi-Fi Alliance OUI: 50:6F:9A)
 		deviceType = s.classifyNANDevice(srcMAC, raw)
-		if deviceType == "drone" {
-			detectedOUI = "50:6F:9A(NAN)+FA:0B:BC(RemoteID)"
-		}
 	} else {
 		// Beacon: 检测 Vendor Specific IE (ASD-STAN OUI: FA:0B:BC + 0x0D)
-		deviceType, detectedOUI = s.classifyDeviceWithOUI(srcMAC, raw)
-	}
-
-	// 确定频段标签
-	bandLabel := getBandLabel(freqMHz)
-
-	// 确定传输类型标签
-	var transportLabel string
-	if frameSubtype == 13 {
-		transportLabel = "NAN"
-	} else {
-		transportLabel = "Beacon"
+		deviceType, _ = s.classifyDeviceWithOUI(srcMAC, raw)
 	}
 
 	switch deviceType {
 	case "drone":
-		slog.Info("检测到无人机",
-			"mac", srcMAC,
-			"band", bandLabel,
-			"transport", transportLabel,
-			"oui", detectedOUI,
-			"signal_dbm", signalStrength)
 		s.stats.dronesDetected++
 
 		var messages []types.DroneMessage
@@ -356,15 +333,19 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 			messages, err = s.processor.parser.ParseFrame(raw)
 		}
 		if err != nil {
-			slog.Warn("无人机数据解析失败", "mac", srcMAC, "error", err)
+			slog.Warn("无人机数据解析失败",
+				"mac", srcMAC,
+				"error", err,
+				"header_hex", fmt.Sprintf("% X", raw[:minInt(16, len(raw))]))
 			return
 		}
 
 		if len(messages) > 0 {
-			slog.Debug("无人机数据解析成功", "mac", srcMAC, "message_count", len(messages))
 			s.processor.ProcessDroneData(srcMAC, messages)
 		} else {
-			slog.Warn("无人机无有效数据", "mac", srcMAC)
+			slog.Warn("无人机无有效数据",
+				"mac", srcMAC,
+				"header_hex", fmt.Sprintf("% X", raw[:minInt(16, len(raw))]))
 		}
 
 	case "normal":
@@ -374,17 +355,6 @@ func (s *Sniffer) processPacket(packet gopacket.Packet) {
 	default:
 		// 不显示未知设备日志
 	}
-}
-
-// getBandLabel 根据频率确定频段标签
-func getBandLabel(freqMHz uint16) string {
-	if freqMHz == 0 {
-		return "WiFi(Unknown)"
-	}
-	if freqMHz >= 5000 {
-		return fmt.Sprintf("WiFi 5G(%dMHz)", freqMHz)
-	}
-	return fmt.Sprintf("WiFi 2.4G(%dMHz)", freqMHz)
 }
 
 // classifyDevice 设备分类（ASTM/ASD-STAN）
@@ -426,6 +396,7 @@ func (s *Sniffer) detectBeaconOUI(raw []byte) string {
 // 验证消息格式有效性。
 //
 // 支持协议版本：
+//   GB 46750-2023: data[1]==0xFF（变长自定义格式）
 //   低4位=1 → GB 42590-2023
 //   低4位=2 → ASTM F3411-22a
 //
@@ -436,13 +407,21 @@ func (s *Sniffer) isValidRemoteID(raw []byte) bool {
 	for i := 0; i < len(raw)-4; i++ {
 		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
 		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC && raw[i+3] == 0x0D {
-			// 在 OUI+Type 之后扫描查找 ASTM/GB 消息 Header（最多 8 字节）
-			scanStart := i + 4
-			maxScan := scanStart + 8
+			dataStart := i + 4
+
+			// 策略 1: GB 46750-2023 检测 (data[1]==0xFF 且版本号高3位==0x1)
+			if dataStart+7 <= len(raw) &&
+				raw[dataStart+1] == 0xFF &&
+				((raw[dataStart+2]>>5)&0x07) == 0x1 {
+				return true
+			}
+
+			// 策略 2: 扫描查找 ASTM/GB 消息 Header（最多 8 字节）
+			maxScan := dataStart + 8
 			if maxScan > len(raw) {
 				maxScan = len(raw)
 			}
-			for j := scanStart; j < maxScan; j++ {
+			for j := dataStart; j < maxScan; j++ {
 				b := raw[j]
 				msgType := (b >> 4) & 0x0F
 				protoVer := b & 0x0F
