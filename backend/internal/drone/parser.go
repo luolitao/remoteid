@@ -1045,16 +1045,16 @@ func (p *RemoteIDParser) decodeGB46750Fields(flags []byte, content []byte, data 
 				case 3: // 0x08: 005 遥控站位置类型 (M) — 1 字节
 					data["rcs_loc_type"] = getGB46750RCSLocTypeName(content[offset])
 					offset += 1
-				case 2: // 0x04: 006 遥控站位置 (M) — 8字节 LE int32×1e7 (lat|lon)
-					if offset+8 <= contentLen {
-						rcsLat := float64(int32(binary.LittleEndian.Uint32(content[offset:offset+4]))) / 10000000.0
-						rcsLon := float64(int32(binary.LittleEndian.Uint32(content[offset+4:offset+8]))) / 10000000.0
-						if math.Abs(rcsLat) < 90.0 {
-							data["rcs_latitude"] = fmt.Sprintf("%.7f", rcsLat)
-						}
-						if math.Abs(rcsLon) < 180.0 {
-							data["rcs_longitude"] = fmt.Sprintf("%.7f", rcsLon)
-						}
+			case 2: // 0x04: 006 遥控站位置 (M) — 8字节 LE int32×1e7 (lon|lat)
+				if offset+8 <= contentLen {
+					rcsLon := float64(int32(binary.LittleEndian.Uint32(content[offset:offset+4]))) / 10000000.0
+					rcsLat := float64(int32(binary.LittleEndian.Uint32(content[offset+4:offset+8]))) / 10000000.0
+					if math.Abs(rcsLon) < 180.0 {
+						data["rcs_longitude"] = fmt.Sprintf("%.7f", rcsLon)
+					}
+					if math.Abs(rcsLat) < 90.0 {
+						data["rcs_latitude"] = fmt.Sprintf("%.7f", rcsLat)
+					}
 						offset += 8
 					}
 				case 1: // 0x02: 007 遥控站高度 (M) — 2字节 LE (val+1000)×2
@@ -1071,16 +1071,16 @@ func (p *RemoteIDParser) decodeGB46750Fields(flags []byte, content []byte, data 
 			case byteIdx == 1:
 				// ---- 标识字节2 ----
 				switch bit {
-				case 7: // 0x80: 008 无人机位置 (M) — 8字节 LE int32×1e7 (lat|lon)
-					if offset+8 <= contentLen {
-						uavLat := float64(int32(binary.LittleEndian.Uint32(content[offset:offset+4]))) / 10000000.0
-						uavLon := float64(int32(binary.LittleEndian.Uint32(content[offset+4:offset+8]))) / 10000000.0
-						if math.Abs(uavLat) < 90.0 {
-							data["latitude"] = fmt.Sprintf("%.7f", uavLat)
-						}
-						if math.Abs(uavLon) < 180.0 {
-							data["longitude"] = fmt.Sprintf("%.7f", uavLon)
-						}
+			case 7: // 0x80: 008 无人机位置 (M) — 8字节 LE int32×1e7 (lon|lat)
+				if offset+8 <= contentLen {
+					uavLon := float64(int32(binary.LittleEndian.Uint32(content[offset:offset+4]))) / 10000000.0
+					uavLat := float64(int32(binary.LittleEndian.Uint32(content[offset+4:offset+8]))) / 10000000.0
+					if math.Abs(uavLon) < 180.0 {
+						data["longitude"] = fmt.Sprintf("%.7f", uavLon)
+					}
+					if math.Abs(uavLat) < 90.0 {
+						data["latitude"] = fmt.Sprintf("%.7f", uavLat)
+					}
 						offset += 8
 					}
 				case 6: // 0x40: 009 航迹角 (M) — 2字节 LE uint16 × 0.1° 分辨率
