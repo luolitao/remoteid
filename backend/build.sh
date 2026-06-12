@@ -10,6 +10,7 @@ export GOARM=7
 
 # 2. 构建
 go build -ldflags="-s -w" -o remoteid-monitor ./cmd/remoteid/
+go build -ldflags="-s -w" -o ridparse ./cmd/ridparse/
 
 # 3. 优化二进制
 upx --best --lzma remoteid-monitor 2>/dev/null || true
