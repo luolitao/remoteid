@@ -21,6 +21,9 @@ type Processor struct {
 
 	alertsMu sync.RWMutex
 	alerts   []*types.Alert // 💡 直接存储原版 DTO 指针，完美契合 API 输入
+
+	// 🆕 新增：专门记录“是否已经打印过上线日志”的集合（只增不减）
+	reportedDrones map[string]struct{}
 }
 
 // NewProcessor 初始化处理器
@@ -30,6 +33,8 @@ func NewProcessor(broadcastCh chan *TrackedDrone) *Processor {
 		broadcastCh: broadcastCh,
 		stopCh:      make(chan struct{}),
 		alerts:      make([]*types.Alert, 0),
+		// 🆕 初始化去重集合
+		reportedDrones: make(map[string]struct{}),
 	}
 	go p.startStateCleaner(5*time.Second, 30*time.Second)
 	return p
@@ -39,31 +44,55 @@ func NewProcessor(broadcastCh chan *TrackedDrone) *Processor {
 func (p *Processor) ProcessPacket(payload []byte, mac string, rssi int) {
 	// 1. 尝试解析
 	telemetry, err := DefaultRegistry.RouteAndParse(payload)
-
-	// 💡 增强调试：如果解析错误，或者解析出的 ID 为空，打印原始数据
 	if err != nil || telemetry == nil || (telemetry.Latitude == 0 && telemetry.Longitude == 0) {
-		// 这就是你要找的“候选数据包”
-		// 打印出这些数据，方便后续针对性分析
 		slog.Warn("潜在候选包但解析不全", "MAC", mac, "Payload", hex.EncodeToString(payload))
 		return
 	}
 
-	// 3. 💡 适配架构：将解析结果与物理层元数据合并
-	// 在这个框架里，你应该创建一个新的结构体或者把元数据关联到 Drone 对象
+	// 1. 确定唯一标识
+	droneKey := telemetry.UASID
+	if droneKey == "" {
+		droneKey = "MAC_" + mac
+	}
+
+	// 2. 加锁进行状态更新和去重判断
+	p.mu.Lock()
+
+	// 🎯 核心修改：查询“已报告集合”，而不是查询“存活集合(p.drones)”
+	_, alreadyReported := p.reportedDrones[droneKey]
+
+	if !alreadyReported {
+		// 如果是第一次见，标记为已报告
+		p.reportedDrones[droneKey] = struct{}{}
+	}
+
+	// 更新正常的存活状态 (这部分逻辑保持不变)
 	drone := &TrackedDrone{
 		Telemetry:  telemetry,
 		MACAddress: mac,
 		RSSI:       rssi,
 		LastSeen:   time.Now(),
 	}
+	p.drones[droneKey] = drone
 
-	// 4. 💡 适配架构：推送到广播管道
-	// 如果你的 Processor 有 broadcastCh，这是最正确的做法
+	p.mu.Unlock() // 解锁
+
+	// 3. 仅在未报告过时，打印新无人机上线日志
+	if !alreadyReported {
+		slog.Info("🚨 [发现新无人机上线]",
+			"DroneKey", droneKey,
+			"Protocol", telemetry.Protocol,
+			"MAC", mac,
+			"RSSI", rssi,
+			"Lat", telemetry.Latitude,
+			"Lng", telemetry.Longitude,
+		)
+	}
+
+	// 4. 推送到广播管道
 	select {
 	case p.broadcastCh <- drone:
-		// 数据已成功进入处理流，前端将收到更新
 	default:
-		// 管道满了，丢弃以防阻塞
 	}
 }
 

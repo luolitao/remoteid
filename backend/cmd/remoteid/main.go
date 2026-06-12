@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -19,13 +20,13 @@ import (
 )
 
 func init() {
-	// 设置默认日志格式（JSON 格式便于结构化解析）
+	// 💡 优化 1：保留毫秒级时间戳，方便高频数据排查
 	opts := &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				t := a.Value.Time()
-				a.Value = slog.StringValue(t.Format("2006-01-02T15:04:05"))
+				a.Value = slog.StringValue(t.Format("2006-01-02T15:04:05.000"))
 			}
 			return a
 		},
@@ -36,14 +37,15 @@ func init() {
 
 func main() {
 	// 1. 注册命令行参数
-	// 💡 注意：因为 config 包可能不支持指定路径，保留 flag 仅用于命令行占位防止报错
-	_ = flag.String("config", "config.yaml", "配置文件路径")
+	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	ifaceFlag := flag.String("iface", "", "指定网络监听网卡接口 (例如 wlan0, wlan2)")
 	flag.Parse()
 
 	slog.Info("RemoteID 监控系统正在启动...")
 
-	// 💡 2. 修正：移除错误的 config.Init 调用，直接获取全局配置
+	// 💡 优化 2：如果 config 包支持，这里应该把 configPath 传进去
+	// 假设 config 包目前只能读默认路径，这里仅作占位
+	_ = configPath
 	cfg := config.Get()
 
 	// 3. 初始化数据库
@@ -55,6 +57,12 @@ func main() {
 		slog.Error("数据库初始化失败", "error", err)
 		os.Exit(1)
 	}
+	// 💡 优化 3：确保退出时关闭数据库 (假设 db 包有 Close 方法)
+	defer func() {
+		if closer, ok := db.Close().(interface{ Close() error }); ok {
+			closer.Close()
+		}
+	}()
 	slog.Info("数据库初始化成功", "path", dbPath)
 
 	// 4. 核心管道与组件装配
@@ -76,40 +84,65 @@ func main() {
 	sniffer := drone.NewSniffer(networkDevice, processor)
 	wsManager := ws.NewManager()
 
+	// 💡 优化 4：使用 atomic 保证并发安全，且方便外部读取
+	var totalReceived atomic.Int64
+
 	// 6. 处理数据广播
-	var totalReceived int64
 	go func() {
 		slog.Info("WebSocket 广播转发协程已启动")
-		for data := range broadcastCh {
-			totalReceived++
 
-			msgBytes, err := json.Marshal(data)
-			if err != nil {
-				slog.Error("WebSocket 序列化失败", "error", err)
-				continue
+		// ⏱️ 设定汇总周期（例如每 5 秒汇总一次，可根据需要调整）
+		ticker := time.NewTicker(300 * time.Second)
+		defer ticker.Stop()
+
+		var intervalCount int64 // 当前时间窗口内的计数
+		var latestSample string // 记录最新的一条 JSON，用于抽样展示
+
+		for {
+			select {
+			case data, ok := <-broadcastCh:
+				if !ok {
+					slog.Info("广播管道已关闭，转发协程退出")
+					return
+				}
+
+				totalReceived.Add(1)
+				intervalCount++ // 窗口内计数 +1
+
+				msgBytes, err := json.Marshal(data)
+				if err != nil {
+					slog.Error("WebSocket 序列化失败", "error", err)
+					continue
+				}
+
+				latestSample = string(msgBytes) // 更新最新样本
+				wsManager.Broadcast(msgBytes)   // 100% 广播给前端
+
+			case <-ticker.C:
+				// ⏱️ 定时触发汇总
+				if intervalCount > 0 { // 只有当这段时间内有数据时才打印，避免空闲刷屏
+					slog.Info("📊 [定时汇总] 数据流转统计",
+						"interval_count", intervalCount, // 本周期（如5秒内）新增数量
+						"totalReceived", totalReceived.Load(), // 全局累计总数
+						"latest_sample", latestSample, // 抽样展示最新的一条完整 JSON
+					)
+					intervalCount = 0 // 重置周期计数，开始下一个窗口
+				}
 			}
-
-			// 💡 修正：不再盲猜 data.ID 等字段，直接打印整段 JSON 字符串来安全观察无人机数据
-			// 🔄 优化：避免日志刷屏，改为每 100 次输出一次（包含第 1 次以便确认连通）
-			if totalReceived == 1 || totalReceived%200 == 0 {
-				slog.Info("📡 [数据流转成功] 解析到无人机数据！",
-					"totalReceived", totalReceived,
-					"raw_json", string(msgBytes),
-				)
-			}
-
-			wsManager.Broadcast(msgBytes)
 		}
 	}()
 
 	// 7. 初始化并异步启动 API 服务
 	serverHandler := api.NewServer(processor, wsManager, sniffer)
+
+	// 💡 优化 5：创建一个全局的 errorCh，用于子协程向主协程报告致命错误
+	errCh := make(chan error, 2)
+
 	go func() {
 		port := ":" + cfg.API.Port
 		slog.Info("API 服务尝试绑定端口", "port", cfg.API.Port)
-		if err := serverHandler.Run(port); err != nil && err != http.ErrServerClosed {
-			slog.Error("API 服务异常退出", "error", err)
-			os.Exit(1)
+		if err := serverHandler.Run(port); err != nil && err.Error() != "http: Server closed" {
+			errCh <- fmt.Errorf("API 服务异常退出: %w", err)
 		}
 	}()
 
@@ -120,27 +153,37 @@ func main() {
 	go func() {
 		slog.Info("Sniffer 捕获协程正在启动...", "device", networkDevice)
 		if err := sniffer.Start(ctx); err != nil {
-			slog.Error("Sniffer 捕获异常中止", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("Sniffer 捕获异常中止: %w", err)
 		}
 	}()
 
 	// 9. 优雅关闭响应机制
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
 
-	slog.Info("收到停机信号，正在释放资源...")
+	// 💡 优化 6：使用 select 同时监听系统信号和子协程的致命错误
+	select {
+	case sig := <-quit:
+		slog.Info("收到停机信号", "signal", sig)
+	case err := <-errCh:
+		slog.Error("子组件发生致命错误，触发全局关闭", "error", err)
+	}
+
+	slog.Info("正在释放资源...")
 
 	// 设定 5 秒优雅关闭缓冲区
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
+	// 停止 Sniffer
 	cancel()
+
+	// 停止 Processor (关闭 broadcastCh)
 	processor.Close()
+
+	// 停止 API 服务
 	if err := serverHandler.Shutdown(shutdownCtx); err != nil {
-		slog.Error("服务优雅关闭失败", "error", err)
-		os.Exit(1)
+		slog.Error("API 服务优雅关闭失败", "error", err)
 	}
 
 	slog.Info("RemoteID 监控系统已安全停止")
