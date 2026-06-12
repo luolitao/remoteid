@@ -11,7 +11,7 @@ func init() {
 	DefaultRegistry.RegisterParser(&GB46750Parser{})
 }
 
-func (p *GB46750Parser) Name() string { return "GB46750-2023(变长)" }
+func (p *GB46750Parser) Name() string { return "GB46750-2025(变长)" }
 
 func (p *GB46750Parser) Match(payload []byte) bool {
 	// 新国标变长无线电特征：通常在厂商特定元素(IE 221)中包含特有魔数，如 payload[1] == 0xFF

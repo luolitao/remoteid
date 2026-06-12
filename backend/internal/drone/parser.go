@@ -1,7 +1,9 @@
 package drone
 
 import (
+	"encoding/hex" // 引入 hex 包用于打印可视化的十六进制原始流
 	"errors"
+	"log" // 引入标准日志包
 	"sync"
 )
 
@@ -10,15 +12,13 @@ var (
 	ErrPacketTooShort      = errors.New("packet length is too short for decoding")
 )
 
+// DebugMode 调试开关，设为 true 时将输出完整的包追踪链路
+var DebugMode = false
+
 // Parser 定义了所有 Remote ID 协议解析器的通用行为契约
 type Parser interface {
-	// Match 根据报文特征快速判断是否由本解析器处理
 	Match(payload []byte) bool
-
-	// Parse 将原始空口字节解析为系统统一的标准化输出结构体
 	Parse(payload []byte) (*UnpackedTelemetry, error)
-
-	// Name 返回该协议的规范名称
 	Name() string
 }
 
@@ -36,17 +36,53 @@ func (r *ParserRegistry) RegisterParser(p Parser) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.parsers = append(r.parsers, p)
+	if DebugMode {
+		log.Printf("[DEBUG-INIT] 成功注册 Remote ID 解析器: %s", p.Name())
+	}
 }
 
-// RouteAndParse 动态路由引擎：遍历所有解析器，谁匹配谁执行
+// RouteAndParse 动态路由引擎：带高级调试跟踪功能
 func (r *ParserRegistry) RouteAndParse(payload []byte) (*UnpackedTelemetry, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	for _, parser := range r.parsers {
-		if parser.Match(payload) {
-			return parser.Parse(payload)
+	// 1. 跟踪流入的原始数据包
+	if DebugMode {
+		log.Printf("[DEBUG-TRACE] 📥 收到待路由数据包 | 长度: %d 字节 | 原始Hex: %s", len(payload), hex.EncodeToString(payload))
+	}
+
+	// 2. 遍历解析器链路
+	for idx, parser := range r.parsers {
+		if DebugMode {
+			log.Printf("[DEBUG-TRACE]  ├── [%d] 正在尝试匹配解析器: %s ...", idx, parser.Name())
 		}
+
+		// 检查是否匹配特征（如 OUI）
+		if parser.Match(payload) {
+			if DebugMode {
+				log.Printf("[DEBUG-TRACE]  ├── 🎯 [命中] 数据包特征符合 %s 协议规范，进入深度解析", parser.Name())
+			}
+
+			// 执行具体协议的 Parse 解包
+			telemetry, err := parser.Parse(payload)
+			if err != nil {
+				if DebugMode {
+					log.Printf("[DEBUG-TRACE]  └── ❌ [%s] 解析失败! 错误原因: %v", parser.Name(), err)
+				}
+				return nil, err
+			}
+
+			// 解析成功跟踪
+			if DebugMode {
+				log.Printf("[DEBUG-TRACE]  └── ✅ [%s] 解析成功! 路由流结束。", parser.Name())
+			}
+			return telemetry, nil
+		}
+	}
+
+	// 3. 没有任何协议解析器认领此包
+	if DebugMode {
+		log.Printf("[DEBUG-TRACE] └── ⚠️ 遍历结束：未找到任何匹配该数据包特征的 Remote ID 解析器。")
 	}
 	return nil, ErrUnsupportedProtocol
 }

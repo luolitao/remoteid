@@ -37,47 +37,14 @@ func NewProcessor(broadcastCh chan *TrackedDrone) *Processor {
 
 // ProcessPacket 解析并更新内部状态机
 func (p *Processor) ProcessPacket(payload []byte, mac string, rssi int) {
-	// 💡 协议特征码白名单 (Magic Numbers)
-	// 0xdd: Vendor Specific (最常见)
-	// 0x01: Standard RID
-	// 0x21: 国标 RID 扩展标识 1
-	// 0x31: 国标 RID 扩展标识 2
-	validPrefixes := []byte{0xdd}
-
-	startIdx := -1
-	for i := 0; i < len(payload)-1; i++ {
-		for _, prefix := range validPrefixes {
-			if payload[i] == prefix {
-				// 💡 额外校验：如果是 0x01，通常紧跟着 0x08 长度信息，做二次确认
-				if prefix == 0x01 && i+1 < len(payload) && payload[i+1] != 0x08 {
-					continue
-				}
-				startIdx = i
-				break
-			}
-		}
-		if startIdx != -1 {
-			break
-		}
-	}
-
-	// 如果找不到任何白名单里的协议头，记录一条调试信息后丢弃
-	if startIdx == -1 {
-		// slog.Debug("无法识别的报文结构", "前几字节", hex.EncodeToString(payload[:4]))
-		return
-	}
-
-	cleanPayload := payload[startIdx:]
-	// 强制打印：每次进入解析前，看看我们到底拿到了什么
-	// fmt.Printf("DEBUG: Processing Mac: %s, PayloadHex: %x\n", mac, cleanPayload)
 	// 1. 尝试解析
-	telemetry, err := DefaultRegistry.RouteAndParse(cleanPayload)
+	telemetry, err := DefaultRegistry.RouteAndParse(payload)
 
 	// 💡 增强调试：如果解析错误，或者解析出的 ID 为空，打印原始数据
 	if err != nil || telemetry == nil || (telemetry.Latitude == 0 && telemetry.Longitude == 0) {
 		// 这就是你要找的“候选数据包”
 		// 打印出这些数据，方便后续针对性分析
-		slog.Warn("潜在候选包但解析不全", "MAC", mac, "Payload", hex.EncodeToString(cleanPayload))
+		slog.Warn("潜在候选包但解析不全", "MAC", mac, "Payload", hex.EncodeToString(payload))
 		return
 	}
 

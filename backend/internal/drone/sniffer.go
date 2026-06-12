@@ -2,9 +2,7 @@ package drone
 
 import (
 	"context"
-	"encoding/hex"
 	"log"
-	"log/slog"
 	"time"
 
 	"github.com/google/gopacket"
@@ -125,7 +123,6 @@ func (s *Sniffer) parseTagsAndProcess(tagsData []byte, mac string, rssi int) {
 			if printLen > 20 {
 				printLen = 20
 			}
-			slog.Debug("发现 0xDD 元素", "前几字节", hex.EncodeToString(ridPayload[:printLen]))
 
 			// 💡 OUI 早期过滤：至少需要 4 字节 (3字节OUI + 1字节类型)
 			if len(ridPayload) >= 4 {
@@ -141,7 +138,7 @@ func (s *Sniffer) parseTagsAndProcess(tagsData []byte, mac string, rssi int) {
 
 				// 如果确认是无人机 OUI，才送入 Processor 处理
 				if isDrone {
-					slog.Info("🎯 命中无人机 OUI，送入处理！", "MAC", mac, "前几字节", hex.EncodeToString(ridPayload[:printLen]))
+					// slog.Info("🎯 命中无人机 OUI，送入处理！", "MAC", mac, "| 长度:", len(ridPayload), " 字节 | 原始Hex:", hex.EncodeToString(ridPayload))
 					s.processor.ProcessPacket(ridPayload, mac, rssi)
 				}
 			}

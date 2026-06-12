@@ -90,10 +90,13 @@ func main() {
 			}
 
 			// 💡 修正：不再盲猜 data.ID 等字段，直接打印整段 JSON 字符串来安全观察无人机数据
-			slog.Info("📡 [数据流转成功] 解析到无人机数据！",
-				"累计接收总数", totalReceived,
-				"raw_json", string(msgBytes),
-			)
+			// 🔄 优化：避免日志刷屏，改为每 100 次输出一次（包含第 1 次以便确认连通）
+			if totalReceived == 1 || totalReceived%100 == 0 {
+				slog.Info("📡 [数据流转成功] 解析到无人机数据！",
+					"累计接收总数", totalReceived,
+					"raw_json", string(msgBytes),
+				)
+			}
 
 			wsManager.Broadcast(msgBytes)
 		}
