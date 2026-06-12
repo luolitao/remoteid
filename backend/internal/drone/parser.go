@@ -4,6 +4,7 @@ import (
 	"encoding/hex" // 引入 hex 包用于打印可视化的十六进制原始流
 	"errors"
 	"log" // 引入标准日志包
+	"log/slog"
 	"sync"
 )
 
@@ -47,9 +48,7 @@ func (r *ParserRegistry) RouteAndParse(payload []byte) (*UnpackedTelemetry, erro
 	defer r.mu.RUnlock()
 
 	// 1. 跟踪流入的原始数据包
-	if DebugMode {
-		log.Printf("[DEBUG-TRACE] 📥 收到待路由数据包 | 长度: %d 字节 | 原始Hex: %s", len(payload), hex.EncodeToString(payload))
-	}
+	// slog.Info("📥 收到待路由数据包 。", "length_bytes", len(payload), "raw_hex", hex.EncodeToString(payload))
 
 	// 2. 遍历解析器链路
 	for idx, parser := range r.parsers {
@@ -66,10 +65,10 @@ func (r *ParserRegistry) RouteAndParse(payload []byte) (*UnpackedTelemetry, erro
 			// 执行具体协议的 Parse 解包
 			telemetry, err := parser.Parse(payload)
 			if err != nil {
-				if DebugMode {
-					log.Printf("[DEBUG-TRACE]  └── ❌ [%s] 解析失败! 错误原因: %v", parser.Name(), err)
-				}
-				return nil, err
+				slog.Warn("❌ 解析失败! 错误原因:",
+					"parser_Name", parser.Name(),
+					"error", err,
+				)
 			}
 
 			// 解析成功跟踪
@@ -81,8 +80,10 @@ func (r *ParserRegistry) RouteAndParse(payload []byte) (*UnpackedTelemetry, erro
 	}
 
 	// 3. 没有任何协议解析器认领此包
-	if DebugMode {
-		log.Printf("[DEBUG-TRACE] └── ⚠️ 遍历结束：未找到任何匹配该数据包特征的 Remote ID 解析器。")
-	}
+	slog.Warn("⚠️ 遍历结束：未找到任何匹配该数据包特征的 Remote ID 解析器。",
+		"length_bytes", len(payload),
+		"raw_hex", hex.EncodeToString(payload),
+	)
+
 	return nil, ErrUnsupportedProtocol
 }
