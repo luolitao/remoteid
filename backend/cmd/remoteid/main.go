@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -11,14 +12,14 @@ import (
 	"time"
 
 	"remoteid-monitor/internal/api"
-	"remoteid-monitor/internal/config" // 💡 保持你原有的 config 包导入
+	"remoteid-monitor/internal/config"
 	"remoteid-monitor/internal/db"
 	"remoteid-monitor/internal/drone"
 	"remoteid-monitor/pkg/ws"
 )
 
 func init() {
-	// 保持原有的 JSON 结构化高性能日志配置
+	// 设置默认日志格式（JSON 格式便于结构化解析）
 	opts := &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -34,109 +35,110 @@ func init() {
 }
 
 func main() {
-	// 1. 解析基础命令行参数（保留原有的配置文件注入方式）
-	configPath := flag.String("config", "config.json", "Path to configuration file")
+	// 1. 注册命令行参数
+	// 💡 注意：因为 config 包可能不支持指定路径，保留 flag 仅用于命令行占位防止报错
+	_ = flag.String("config", "config.yaml", "配置文件路径")
+	ifaceFlag := flag.String("iface", "", "指定网络监听网卡接口 (例如 wlan0, wlan2)")
 	flag.Parse()
 
-	slog.Info("正在启动 Remote ID 监视后端系统...")
+	slog.Info("RemoteID 监控系统正在启动...")
 
-	// 2. 💡 对齐原版配置接口：调用你原有的初始化方法
-	// 如果你原版的 config 包有特定的 Init 方法（例如 config.Init(*configPath)），请取消下行注释：
-	// config.Init(*configPath)
+	// 💡 2. 修正：移除错误的 config.Init 调用，直接获取全局配置
+	cfg := config.Get()
 
-	// 从你截图中的 `config.Get().API.Port` 可以看出，你的配置是通过 Get() 单例获取的
-	// 这里我们直接通过 `config.Get()` 提取所需的全局变量
-	globalCfg := config.Get()
-	if globalCfg == nil {
-		slog.Error("全局配置单例获取失败，请检查配置文件是否存在或格式是否正确")
+	// 3. 初始化数据库
+	dbPath := "remoteid.db"
+	if cfg.Database.Path != "" {
+		dbPath = cfg.Database.Path
+	}
+	if err := db.Init(dbPath); err != nil {
+		slog.Error("数据库初始化失败", "error", err)
 		os.Exit(1)
 	}
+	slog.Info("数据库初始化成功", "path", dbPath)
 
-	// 3. 核心级安全链：接管全局退出信号 (Ctrl+C / kill / SIGTERM)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// 4. 初始化持久化高速 SQLite WAL 连接池
-	// 💡 这里的 DBPath 请根据你实际的 config 结构体字段进行替换（例如 globalCfg.DB.Path 或 globalCfg.DatabasePath）
-	if err := db.Init(globalCfg.DBPath); err != nil {
-		slog.Error("初始化数据库失败", "error", err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			slog.Error("关闭数据库时发生异常", "error", err)
-		}
-	}()
-
-	// 5. 构建中央高并发异步通信总线 (WebSocket Hub)
-	wsHub := ws.NewHub()
-	go wsHub.Run(ctx)
-
-	// 6. 实例化归一化遥测状态机中央处理器 (Processor)
-	broadcastCh := make(chan *drone.TrackedDrone, 1000)
+	// 4. 核心管道与组件装配
+	broadcastCh := make(chan *drone.TrackedDrone, 2048)
 	processor := drone.NewProcessor(broadcastCh)
-	defer processor.Close()
 
-	// 7. 启动桥接消费协程：将解包后的标准数据，同步灌入数据库与前端广播通道
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case data, ok := <-broadcastCh:
-				if !ok {
-					return
-				}
-				_ = db.SaveDrone(data.MACAddress, data.Telemetry.UASID, data.Telemetry.Protocol)
-				_ = db.SavePosition(data.MACAddress, data.Telemetry.Latitude, data.Telemetry.Longitude, data.Telemetry.Altitude)
-				wsHub.Broadcast(data)
-			}
-		}
-	}()
-
-	// 8. 挂载物理网卡驱动级核心嗅探器 (Sniffer)
-	// 💡 这里的 Interface 请根据你实际的 config 字段替换（例如 globalCfg.Network.Interface）
-	sniffer := drone.NewSniffer(globalCfg.Interface, processor)
-	go func() {
-		if err := sniffer.Start(ctx); err != nil {
-			slog.Error("底层网卡嗅探引擎异常中断", "error", err)
-			stop()
-		}
-	}()
-
-	// 9. 启动 Web API 服务网关
-	// 💡 恢复你原版的路由挂载：根据截图，你原版使用的是 api.NewServer
-	// 如果你已经重构了 api 包，可以用这行：router := api.SetupRouter(wsHub)
-	// 如果没有重构 api 包，则使用你原有的方式，把新的组件传入：
-	server := api.NewServer(processor, wsHub, sniffer)
-
-	// 💡 动态拼装服务器地址，完全对齐你原本的 `":" + config.Get().API.Port` 逻辑
-	serverAddr := ":" + globalCfg.API.Port
-	srv := &http.Server{
-		Addr:    serverAddr,
-		Handler: server, // 如果 NewServer 返回的是 http.Handler 或者符合 gin.Engine 的路由
+	// 5. 网卡优先级抉择
+	networkDevice := "wlan2"
+	if *ifaceFlag != "" {
+		networkDevice = *ifaceFlag
+		slog.Info("使用命令行指定的网卡接口", "iface", networkDevice)
+	} else if cfg.Network.Interface != "" {
+		networkDevice = cfg.Network.Interface
+		slog.Info("使用配置文件中的网卡接口", "iface", networkDevice)
+	} else {
+		slog.Warn("未指定网卡，将使用系统默认接口", "iface", networkDevice)
 	}
 
+	sniffer := drone.NewSniffer(networkDevice, processor)
+	wsManager := ws.NewManager()
+
+	// 6. 处理数据广播
+	var totalReceived int64
 	go func() {
-		slog.Info("Web 接口及 WebSocket 监听通道已就绪", "address", serverAddr)
-		// 💡 改用标准库的 srv.ListenAndServe() 配合下方的优雅关闭
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("HTTP 网关异常崩溃", "error", err)
-			stop()
+		slog.Info("WebSocket 广播转发协程已启动")
+		for data := range broadcastCh {
+			totalReceived++
+
+			msgBytes, err := json.Marshal(data)
+			if err != nil {
+				slog.Error("WebSocket 序列化失败", "error", err)
+				continue
+			}
+
+			// 💡 修正：不再盲猜 data.ID 等字段，直接打印整段 JSON 字符串来安全观察无人机数据
+			slog.Info("📡 [数据流转成功] 解析到无人机数据！",
+				"累计接收总数", totalReceived,
+				"raw_json", string(msgBytes),
+			)
+
+			wsManager.Broadcast(msgBytes)
 		}
 	}()
 
-	// 10. ⚡ 优雅收尾哨兵：阻塞在这里，直到系统收到退出信号
-	<-ctx.Done()
-	slog.Info("接收到停机指令，启动优雅退出（Graceful Shutdown）机制...")
+	// 7. 初始化并异步启动 API 服务
+	serverHandler := api.NewServer(processor, wsManager, sniffer)
+	go func() {
+		port := ":" + cfg.API.Port
+		slog.Info("API 服务尝试绑定端口", "port", cfg.API.Port)
+		if err := serverHandler.Run(port); err != nil && err != http.ErrServerClosed {
+			slog.Error("API 服务异常退出", "error", err)
+			os.Exit(1)
+		}
+	}()
 
-	// 给外围残存连接或慢 I/O 留出最多 5 秒的喘息时间
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 8. 异步启动 Sniffer 硬件抓包
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("HTTP 服务器强制关闭", "error", err)
+	go func() {
+		slog.Info("Sniffer 捕获协程正在启动...", "device", networkDevice)
+		if err := sniffer.Start(ctx); err != nil {
+			slog.Error("Sniffer 捕获异常中止", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 9. 优雅关闭响应机制
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("收到停机信号，正在释放资源...")
+
+	// 设定 5 秒优雅关闭缓冲区
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	cancel()
+	processor.Close()
+	if err := serverHandler.Shutdown(shutdownCtx); err != nil {
+		slog.Error("服务优雅关闭失败", "error", err)
+		os.Exit(1)
 	}
 
-	slog.Info("后端服务已安全离线，所有文件句柄与硬件网卡已正常归还系统。")
+	slog.Info("RemoteID 监控系统已安全停止")
 }

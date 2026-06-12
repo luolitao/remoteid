@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	// 💡 引入原程序共享的 DTO 核心包
+	// 💡 在前面加上 models 别名，这样代码里的 models.xxx 就全部合法了！
 	"remoteid-monitor/pkg/types"
 
 	"github.com/gin-gonic/gin"
@@ -46,8 +48,9 @@ func (s *Server) createAlert(c *gin.Context) {
 func (s *Server) getAlertDetails(c *gin.Context) {
 	id := c.Param("id")
 
-	alert := s.processor.GetAlertByID(id)
-	if alert == nil {
+	// 💡 修改后：将 result 改为 err，并检查是否为 nil
+	err := s.processor.ResolveAlert(id)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error":   "alert_not_found",
 			"message": "指定的警报未找到",
@@ -56,14 +59,15 @@ func (s *Server) getAlertDetails(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, alert)
+	c.JSON(http.StatusOK, err)
 }
 
 func (s *Server) resolveAlert(c *gin.Context) {
 	id := c.Param("id")
 
-	result := s.processor.ResolveAlert(id)
-	if !result {
+	// 找到第 67-68 行，修改为：
+	err := s.processor.ResolveAlert(id)
+	if err != nil { // 👈 如果返回了错误，说明警报未找到或处理失败
 		c.JSON(http.StatusNotFound, gin.H{
 			"error":   "alert_not_found",
 			"message": "指定的警报未找到",

@@ -130,3 +130,11 @@ type WSMessage struct {
 	Data interface{} `json:"data"`
 	MAC  string      `json:"mac,omitempty"`
 }
+
+// PositionRecord 定义无人机的历史轨迹点位置
+type PositionRecord struct {
+	Lat       float64   `json:"lat"`       // 纬度
+	Lng       float64   `json:"lng"`       // 经度
+	Alt       float64   `json:"alt"`       // 高度
+	Timestamp time.Time `json:"timestamp"` // 记录时间
+}

@@ -52,13 +52,13 @@ func (s *Server) getTrajectory(c *gin.Context) {
 	}
 
 	// 确保 Points 不为 nil
-	if trajectory.Points == nil {
-		trajectory.Points = []*types.Position{}
+	if trajectory == nil {
+		trajectory = []types.PositionRecord{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"trajectory": trajectory,
-		"points":     len(trajectory.Points),
+		"points":     len(trajectory),
 	})
 }
 
@@ -83,7 +83,7 @@ func (s *Server) searchDrones(c *gin.Context) {
 
 	results := s.processor.SearchDrones(query)
 	if results == nil {
-		results = []*types.DroneData{}
+		results = []types.DroneDetail{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

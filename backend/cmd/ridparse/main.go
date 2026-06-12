@@ -1,739 +1,159 @@
-// ridparse — Remote ID Monitor 数据解析命令行工具
-//
-// 支持三种模式：
-//   1. 实时抓包:   ridparse -iface wlan1
-//   2. 离线分析:   ridparse -file capture.pcap
-//   3. TUI 监控:   ridparse -tui [-url http://rpi5.lan:8000]
-//
-// TUI 模式通过 HTTP API + WebSocket 连接后端服务，在终端内实时展示无人机列表，
-// 支持自动刷新、连接状态指示、在线时长统计。
 package main
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
-	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"sort"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
+	"remoteid-monitor/internal/api"
+	"remoteid-monitor/internal/config"
+	"remoteid-monitor/internal/db"
 	"remoteid-monitor/internal/drone"
-	"remoteid-monitor/pkg/types"
-
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/pcapgo"
-	"github.com/gorilla/websocket"
+	"remoteid-monitor/pkg/ws"
 )
 
-// ANSI 颜色 / 控制
-const (
-	colorReset  = "\033[0m"
-	colorBold   = "\033[1m"
-	colorRed    = "\033[31m"
-	colorGreen  = "\033[32m"
-	colorYellow = "\033[33m"
-	colorBlue   = "\033[34m"
-	colorCyan   = "\033[36m"
-	colorWhite  = "\033[37m"
-	colorGray   = "\033[90m"
-
-	clearScreen = "\033[H\033[2J"
-	hideCursor  = "\033[?25l"
-	showCursor  = "\033[?25h"
-
-	version = "1.0.0"
-)
-
-var (
-	stats struct {
-		totalPackets int
-		dronePackets int
-		uniqueDrones map[string]bool
-		startTime    time.Time
+func init() {
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				t := a.Value.Time()
+				a.Value = slog.StringValue(t.Format("2006-01-02T15:04:05.000"))
+			}
+			return a
+		},
 	}
-	parser = drone.NewParser()
-)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	slog.SetDefault(logger)
+}
 
 func main() {
-	iface := flag.String("iface", "", "监控网络接口（实时抓包模式）")
-	file := flag.String("file", "", "pcap/pcapng 文件路径（离线分析模式）")
-	tui := flag.Bool("tui", false, "TUI 监控模式（连接后端 API + WebSocket）")
-	apiURL := flag.String("url", "http://127.0.0.1:8000", "后端 API 地址（TUI 模式使用）")
-	refresh := flag.Duration("refresh", 2*time.Second, "TUI 刷新间隔")
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `ridparse — Remote ID Monitor (ASTM F3411-22a / ASD-STAN) 数据解析工具
-
-用法:
-  ridparse -iface wlan1                     实时抓包并解析
-  ridparse -file capture.pcap               离线分析 pcap 文件
-  ridparse -tui                             TUI 监控模式（连接本地后端）
-  ridparse -tui -url http://rpi5.lan:8000   TUI 连接指定后端
-
-选项:
-`)
-		flag.PrintDefaults()
-	}
+	cfgFile := flag.String("config", "config.yaml", "配置文件路径")
+	ifaceFlag := flag.String("iface", "", "指定网络监听网卡接口 (例如 wlan0, wlan2)")
 	flag.Parse()
 
-	stats.uniqueDrones = make(map[string]bool)
-	stats.startTime = time.Now()
+	slog.Info("RemoteID 监控系统正在启动...")
 
-	switch {
-	case *tui:
-		runTUI(*apiURL, *refresh)
-	case *file != "":
-		parsePcapFile(*file)
-	case *iface != "":
-		parseLive(*iface)
-	default:
-		flag.Usage()
-		os.Exit(1)
-	}
-}
-
-// ============================================================
-// 模式 1: TUI 监控（API + WebSocket）
-// ============================================================
-
-type droneState struct {
-	mu       sync.RWMutex
-	drones   map[string]*types.DroneData
-	lastSeen map[string]time.Time
-}
-
-func (ds *droneState) update(d *types.DroneData) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	ds.drones[d.MAC] = d
-	ds.lastSeen[d.MAC] = time.Now()
-}
-
-func (ds *droneState) removeStale(maxAge time.Duration) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	now := time.Now()
-	for mac, t := range ds.lastSeen {
-		if now.Sub(t) > maxAge {
-			delete(ds.drones, mac)
-			delete(ds.lastSeen, mac)
+	// 智能探测配置文件
+	targetConfig := *cfgFile
+	if targetConfig == "config.yaml" {
+		if _, err := os.Stat("config.yaml"); os.IsNotExist(err) {
+			if _, errYml := os.Stat("config.yml"); errYml == nil {
+				targetConfig = "config.yml"
+				slog.Info("未检测到 config.yaml，自动适配并加载同路径下的 config.yml")
+			}
 		}
 	}
-}
 
-func (ds *droneState) sortedList() []*types.DroneData {
-	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-	list := make([]*types.DroneData, 0, len(ds.drones))
-	for _, d := range ds.drones {
-		list = append(list, d)
+	if err := config.Init(targetConfig); err != nil {
+		slog.Error("加载配置文件失败", "path", targetConfig, "error", err)
+		os.Exit(1)
 	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].LastSeen.After(list[j].LastSeen)
-	})
-	return list
-}
 
-func runTUI(apiURL string, refreshInterval time.Duration) {
-	fmt.Print(hideCursor)
-	defer fmt.Print(showCursor)
+	cfg := config.Get()
 
+	// 初始化数据库
+	dbPath := "remoteid.db"
+	if cfg.Database.Path != "" {
+		dbPath = cfg.Database.Path
+	}
+	if err := db.Init(dbPath); err != nil {
+		slog.Error("数据库初始化失败", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("数据库初始化成功", "path", dbPath)
+
+	// 核心管道与组件装配
+	broadcastCh := make(chan *drone.TrackedDrone, 2048)
+	processor := drone.NewProcessor(broadcastCh)
+
+	// 网卡优先级抉择
+	networkDevice := "wlan1"
+	if *ifaceFlag != "" {
+		networkDevice = *ifaceFlag
+		slog.Info("使用命令行指定的网卡接口", "iface", networkDevice)
+	} else if cfg.Network.Interface != "" {
+		networkDevice = cfg.Network.Interface
+		slog.Info("使用配置文件中的网卡接口", "iface", networkDevice)
+	} else {
+		slog.Warn("未指定网卡，将使用系统默认接口", "iface", networkDevice)
+	}
+
+	sniffer := drone.NewSniffer(networkDevice, processor)
+	wsManager := ws.NewManager()
+
+	// 💡 优化点：参考 ridparse 的在线监控思想，对数据流向进行结构化计数和监控
+	var totalReceived int64
+	go func() {
+		slog.Info("WebSocket 广播转发协程已启动")
+		for data := range broadcastCh {
+			totalReceived++
+			// 每收到 1 个或多个无人机数据时，在后台打出高亮调试日志，证明核心链路通了
+			slog.Info("📡 [数据流转成功] 成功接收并解析到无人机 Remote ID 数据！",
+				"ID", data.ID,
+				"MAC", data.MAC,
+				"Lat", data.Latitude,
+				"Lng", data.Longitude,
+				"累计接收总数", totalReceived,
+			)
+
+			msgBytes, err := json.Marshal(data)
+			if err != nil {
+				slog.Error("WebSocket 序列化失败", "error", err)
+				continue
+			}
+			wsManager.Broadcast(msgBytes)
+		}
+	}()
+
+	// 初始化并异步启动 API 服务
+	serverHandler := api.NewServer(processor, wsManager, sniffer)
+	go func() {
+		port := ":" + cfg.API.Port
+		slog.Info("API 服务尝试绑定端口", "port", cfg.API.Port)
+		if err := serverHandler.Run(port); err != nil && err != http.ErrServerClosed {
+			slog.Error("API 服务异常退出", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 异步启动 Sniffer 硬件抓包
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 捕获 Ctrl+C
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		cancel()
-	}()
-
-	state := &droneState{
-		drones:   make(map[string]*types.DroneData),
-		lastSeen: make(map[string]time.Time),
-	}
-
-	wsURL := wsURLFromHTTP(apiURL) + "/ws"
-	wsConnected := false
-	var wsMu sync.Mutex
-
-	// WebSocket 连接 goroutine
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-			if err != nil {
-				wsMu.Lock()
-				wsConnected = false
-				wsMu.Unlock()
-				time.Sleep(3 * time.Second)
-				continue
-			}
-
-			wsMu.Lock()
-			wsConnected = true
-			wsMu.Unlock()
-
-			for {
-				_, msg, err := conn.ReadMessage()
-				if err != nil {
-					break
-				}
-				var wsMsg types.WSMessage
-				if err := json.Unmarshal(msg, &wsMsg); err != nil {
-					continue
-				}
-				if wsMsg.Type == "drone_update" {
-					data, _ := json.Marshal(wsMsg.Data)
-					var d types.DroneData
-					if json.Unmarshal(data, &d) == nil {
-						state.update(&d)
-					}
-				}
-			}
-
-			conn.Close()
-			wsMu.Lock()
-			wsConnected = false
-			wsMu.Unlock()
-			time.Sleep(3 * time.Second)
-		}
-	}()
-
-	// 初始加载（通过 HTTP）
-	go func() {
-		loadFromAPI(apiURL, state)
-	}()
-
-	// TUI 渲染循环
-	ticker := time.NewTicker(refreshInterval)
-	defer ticker.Stop()
-
-	lastFetch := time.Now()
-	fetchInterval := 5 * time.Second
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// 定期全量拉取兜底
-			if time.Since(lastFetch) > fetchInterval {
-				loadFromAPI(apiURL, state)
-				lastFetch = time.Now()
-			}
-
-			state.removeStale(30 * time.Second)
-
-			wsMu.Lock()
-			connected := wsConnected
-			wsMu.Unlock()
-
-			renderTUI(state.sortedList(), connected, apiURL)
-		}
-	}
-}
-
-func wsURLFromHTTP(httpURL string) string {
-	u, err := url.Parse(httpURL)
-	if err != nil {
-		return "ws://127.0.0.1:8000"
-	}
-	switch u.Scheme {
-	case "https":
-		u.Scheme = "wss"
-	default:
-		u.Scheme = "ws"
-	}
-	return u.String()
-}
-
-func loadFromAPI(apiURL string, state *droneState) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(apiURL + "/api/drones")
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
-
-	var result struct {
-		Drones []*types.DroneData `json:"drones"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return
-	}
-
-	for _, d := range result.Drones {
-		state.update(d)
-	}
-}
-
-func renderTUI(drones []*types.DroneData, wsConnected bool, apiURL string) {
-	fmt.Print(clearScreen)
-
-	elapsed := time.Since(stats.startTime)
-	wsStatus := colorRed + "● 断线" + colorReset
-	if wsConnected {
-		wsStatus = colorGreen + "● 在线" + colorReset
-	}
-
-	// 顶部状态栏
-	sep := colorCyan + strings.Repeat("═", 62) + colorReset
-	div := colorCyan + strings.Repeat("─", 62) + colorReset
-
-	fmt.Println(sep)
-	fmt.Println(colorCyan + "  📡 Remote ID Monitor v" + version + "  |  后端: " + apiURL + "  |  WS: " + wsStatus + "  |  运行: " + elapsed.Round(time.Second).String() + colorReset)
-	fmt.Println(div)
-
-	if len(drones) == 0 {
-		fmt.Println("\n  " + colorGray + "  暂无无人机数据，等待接收..." + colorReset + "\n")
-	} else {
-		for _, d := range drones {
-			stdColor := colorBlue
-			stdLabel := d.Standard
-
-			loc := "-"
-			if d.Latitude != 0 || d.Longitude != 0 {
-				loc = fmt.Sprintf("%.4f, %.4f", d.Latitude, d.Longitude)
-			}
-
-			alt := "-"
-			if d.Altitude != 0 {
-				alt = fmt.Sprintf("%.1f m", d.Altitude)
-			}
-
-			spd := "-"
-			if d.Speed != 0 {
-				spd = fmt.Sprintf("%.1f m/s", d.Speed)
-			}
-
-			sig := d.SignalStrength
-			if sig == "" {
-				sig = "-"
-			}
-
-			uaID := d.UASID
-			if uaID == "" {
-				uaID = "-"
-			}
-
-			sinceLast := time.Since(d.LastSeen)
-			ageTag := ""
-			if sinceLast > 10*time.Second {
-				ageTag = " " + colorYellow + "●" + colorReset
-			}
-
-			// 卡片标题行
-			title := fmt.Sprintf("%s%s%s  %s%s%s  %s%s%s",
-				colorYellow, d.MAC, colorReset,
-				stdColor, stdLabel, colorReset,
-				colorGray, sinceLast.Round(time.Second).String(), colorReset) + ageTag
-			fmt.Println("  " + colorCyan + "┌─ " + title + colorReset)
-
-			// UA_ID 行
-			fmt.Println("  " + colorCyan + "│" + colorReset + "  UA_ID: " + colorBold + uaID + colorReset)
-
-			// 位置行
-			fmt.Println("  " + colorCyan + "│" + colorReset + "  位置: " + loc + "  高度: " + alt + "  速度: " + spd)
-
-			// 信号行
-			fmt.Println("  " + colorCyan + "│" + colorReset + "  信号: " + sig)
-
-			// 卡片底部
-			fmt.Println("  " + colorCyan + "└" + strings.Repeat("─", 60) + "┘" + colorReset)
-			fmt.Println()
-		}
-	}
-
-	// 底部状态栏
-	fmt.Println(div)
-	fmt.Println(colorCyan + "  无人机: " + colorBold + fmt.Sprintf("%d", len(drones)) + colorReset + "  |  Ctrl+C 退出  |  刷新: 2s (API: 5s)" + colorReset)
-	fmt.Println(sep)
-}
-
-// ============================================================
-// 模式 2: 离线分析 pcap 文件
-// ============================================================
-
-func parsePcapFile(filename string) {
-	f, err := os.Open(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "无法打开文件: %v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	var packetSource *gopacket.PacketSource
-	r, err := pcapgo.NewNgReader(f, pcapgo.DefaultNgReaderOptions)
-	if err == nil {
-		packetSource = gopacket.NewPacketSource(r, layers.LinkTypeEthernet)
-	} else {
-		f.Seek(0, 0)
-		r2, err2 := pcapgo.NewReader(f)
-		if err2 != nil {
-			fmt.Fprintf(os.Stderr, "无法解析 pcap 文件: %v (pcapng) / %v (pcap)\n", err, err2)
+		slog.Info("Sniffer 捕获协程正在启动...", "device", networkDevice)
+		// 提示用户检查网卡状态
+		slog.Info("💡 提示：如果长时期无数据，请确认网卡已通过 'iwconfig' 强转为 Monitor 模式并锁定了正确信道。")
+		if err := sniffer.Start(ctx); err != nil {
+			slog.Error("Sniffer 捕获异常中止", "error", err)
 			os.Exit(1)
 		}
-		packetSource = gopacket.NewPacketSource(r2, r2.LinkType())
-	}
+	}()
 
-	fmt.Printf("%s📡 离线分析: %s%s\n\n", colorGreen, filename, colorReset)
-	printHeader()
+	// 优雅关闭响应机制
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
 
-	for packet := range packetSource.Packets() {
-		if packet == nil {
-			continue
-		}
-		stats.totalPackets++
-		processPacket(packet)
-	}
+	slog.Info("收到停机信号，正在释放资源...")
 
-	printStats()
-}
+	// 设定 5 秒优雅关闭缓冲区
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 
-// ============================================================
-// 模式 3: 实时抓包
-// ============================================================
-
-func parseLive(iface string) {
-	handle, err := pcap.OpenLive(iface, 1024, true, pcap.BlockForever)
-	if err != nil {
-		if strings.Contains(err.Error(), "Permission denied") {
-			fmt.Fprintf(os.Stderr, "权限不足。请运行: sudo setcap 'cap_net_raw,cap_net_admin+eip' ridparse\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "打开网卡失败: %v\n", err)
-		}
+	cancel()
+	processor.Close()
+	if err := serverHandler.Shutdown(shutdownCtx); err != nil {
+		slog.Error("服务优雅关闭失败", "error", err)
 		os.Exit(1)
 	}
-	defer handle.Close()
 
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-	packetSource.NoCopy = true
-
-	fmt.Printf("%s📡 实时抓包: %s (Ctrl+C 退出)%s\n\n", colorGreen, iface, colorReset)
-	printHeader()
-
-	for packet := range packetSource.Packets() {
-		if packet == nil {
-			continue
-		}
-		stats.totalPackets++
-		processPacket(packet)
-	}
+	slog.Info("RemoteID 监控系统已安全停止")
 }
-
-// ============================================================
-// 共享：解析 + 输出
-// ============================================================
-
-func printHeader() {
-	fmt.Printf("%s%-20s %-10s %-8s %-14s %-22s %-12s %-10s %-8s %-8s%s\n",
-		colorBold,
-		"MAC", "标准", "传输", "频段", "UA_ID", "纬度", "经度", "高度(m)", "速度(m/s)",
-		colorReset)
-	fmt.Printf("%s%s%s\n", colorCyan, strings.Repeat("─", 130), colorReset)
-}
-
-func processPacket(packet gopacket.Packet) {
-	signalStrength := -100
-	var freqMHz uint16
-	if rl := packet.Layer(layers.LayerTypeRadioTap); rl != nil {
-		if rt, ok := rl.(*layers.RadioTap); ok {
-			signalStrength = int(rt.DBMAntennaSignal)
-			freqMHz = uint16(rt.ChannelFrequency)
-		}
-	}
-
-	dl := packet.Layer(layers.LayerTypeDot11)
-	if dl == nil {
-		return
-	}
-	dot11, ok := dl.(*layers.Dot11)
-	if !ok {
-		return
-	}
-
-	srcMAC := ""
-	if dot11.Address2 != nil {
-		srcMAC = dot11.Address2.String()
-	}
-	if srcMAC == "" {
-		return
-	}
-
-	frameSubtype := getMgmtSubtype(dot11.Type)
-	if frameSubtype == 0 && dot11.Type != layers.Dot11TypeMgmtAssociationReq {
-		return
-	}
-
-	if signalStrength < -95 {
-		return
-	}
-
-	raw := packet.Data()
-
-	// 确定传输类型和 OUI
-	transport := "Beacon"
-	ouiLabel := ""
-	if frameSubtype == 13 {
-		transport = "NAN"
-	}
-
-	var messages []types.DroneMessage
-	var standard string
-
-	if frameSubtype == 13 {
-		if !isValidNANRemoteID(raw) {
-			return
-		}
-		ouiLabel = "50:6F:9A(NAN)+FA:0B:BC(RemoteID)"
-		msgs, err := parser.ParseNANFrame(raw)
-		if err != nil || len(msgs) == 0 {
-			return
-		}
-		messages = msgs
-		standard = "ASTM(NAN)"
-	} else {
-		if !isValidRemoteID(raw) {
-			return
-		}
-		ouiLabel = detectOUI(raw)
-		msgs, err := parser.ParseFrame(raw)
-		if err != nil || len(msgs) == 0 {
-			return
-		}
-		messages = msgs
-		if len(msgs) > 0 {
-			standard = msgs[0].Standard
-		}
-	}
-
-	// 确定频段标签
-	bandLabel := "WiFi(Unknown)"
-	if freqMHz >= 5000 {
-		bandLabel = fmt.Sprintf("WiFi 5G(%dMHz)", freqMHz)
-	} else if freqMHz > 0 {
-		bandLabel = fmt.Sprintf("WiFi 2.4G(%dMHz)", freqMHz)
-	}
-
-	stats.dronePackets++
-	stats.uniqueDrones[srcMAC] = true
-
-	printDroneInfo(srcMAC, standard, messages, signalStrength, bandLabel, transport, ouiLabel)
-}
-
-// detectOUI 检测 Beacon 帧中的 Remote ID OUI，返回 OUI 标签
-func detectOUI(raw []byte) string {
-	for i := 0; i < len(raw)-4; i++ {
-		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC && raw[i+3] == 0x0D {
-			return "FA:0B:BC(ASD-STAN)"
-		}
-		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 && raw[i+3] == 0xFD {
-			return "06:05:04(LegacyASTM)"
-		}
-	}
-	return "-"
-}
-
-func getMgmtSubtype(t layers.Dot11Type) uint8 {
-	switch t {
-	case layers.Dot11TypeMgmtBeacon:
-		return 8
-	case layers.Dot11TypeMgmtProbeReq:
-		return 4
-	case layers.Dot11TypeMgmtProbeResp:
-		return 5
-	case layers.Dot11TypeMgmtAuthentication:
-		return 11
-	case layers.Dot11TypeMgmtAssociationReq:
-		return 0
-	case layers.Dot11TypeMgmtAssociationResp:
-		return 1
-	case layers.Dot11TypeMgmtDeauthentication:
-		return 12
-	case layers.Dot11TypeMgmtAction:
-		return 13
-	default:
-		return 0
-	}
-}
-
-func isValidRemoteID(raw []byte) bool {
-	for i := 0; i < len(raw)-5; i++ {
-		// 检查 ASD-STAN OUI (FA:0B:BC) + OUI_Type (0x0D)
-		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
-			if i+5 < len(raw) && raw[i+3] == 0x0D {
-				dataStart := i + 4
-
-				// 策略 1: GB 46750-2023 检测 (data[1]==0xFF 且版本号高3位==0x1)
-				if dataStart+7 <= len(raw) &&
-					raw[dataStart+1] == 0xFF &&
-					((raw[dataStart+2]>>5)&0x07) == 0x1 {
-					return true
-				}
-
-				// 策略 2: 跳过 OUI(3B) + VendType(1B) + Message Counter(1B) = 5 字节
-				payload := raw[i+5:]
-				if len(payload) < 1 {
-					continue
-				}
-
-				firstNibble := (payload[0] >> 4) & 0x0F
-				lowNibble := payload[0] & 0x0F
-
-				// 高4位=消息类型(0-5), 低4位=协议版本(1=GB, 2=ASTM)
-				if firstNibble <= 5 && (lowNibble == 2 || lowNibble == 1) {
-					return true
-				}
-
-				// 兼容旧版格式
-				if (firstNibble == 2 || firstNibble == 1) && lowNibble <= 5 {
-					return true
-				}
-			}
-		}
-
-		// 检查旧版 ASTM OUI (06:05:04) + OUI_Type (0xFD)
-		if raw[i] == 0x06 && raw[i+1] == 0x05 && raw[i+2] == 0x04 {
-			if i+5 < len(raw) && raw[i+3] == 0xFD {
-				// 跳过 OUI(3B) + OUI_Type(1B) + Message Counter(1B) = 5 字节
-				payload := raw[i+5:]
-				if len(payload) < 1 {
-					continue
-				}
-				firstNibble := (payload[0] >> 4) & 0x0F
-				lowNibble := payload[0] & 0x0F
-				if firstNibble <= 5 && (lowNibble == 2 || lowNibble == 1) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func isValidNANRemoteID(raw []byte) bool {
-	hasWiFiAlliance := false
-	hasRemoteID := false
-	for i := 0; i < len(raw)-3; i++ {
-		if raw[i] == 0x50 && raw[i+1] == 0x6F && raw[i+2] == 0x9A {
-			if i+3 < len(raw) && raw[i+3] == 0x13 {
-				hasWiFiAlliance = true
-			}
-		}
-		if raw[i] == 0xFA && raw[i+1] == 0x0B && raw[i+2] == 0xBC {
-			if i+3 < len(raw) && raw[i+3] == 0x0D {
-				hasRemoteID = true
-			}
-		}
-	}
-	return hasWiFiAlliance && hasRemoteID
-}
-
-func printDroneInfo(mac, standard string, messages []types.DroneMessage, signal int, band, transport, oui string) {
-	var (
-		uasID    string
-		uaType   string
-		lat      string
-		lon      string
-		alt      string
-		speed    string
-		msgTypes []string
-	)
-
-	for _, msg := range messages {
-		msgTypes = append(msgTypes, msg.MessageType)
-		switch msg.MessageType {
-		case "basic_id":
-			if v, ok := msg.Data["uas_id"]; ok && v != "" {
-				uasID = v
-			}
-			if v, ok := msg.Data["ua_type"]; ok && v != "" {
-				uaType = v
-			}
-		case "location":
-			if v, ok := msg.Data["latitude"]; ok {
-				lat = v
-			}
-			if v, ok := msg.Data["longitude"]; ok {
-				lon = v
-			}
-			if v, ok := msg.Data["altitude_baro"]; ok {
-				alt = v
-			} else if v, ok := msg.Data["altitude_geo"]; ok {
-				alt = v
-			}
-			if v, ok := msg.Data["speed_h"]; ok {
-				speed = v
-			}
-		}
-	}
-
-	stdColor := colorBlue
-
-	uasID = truncate(uasID, 20)
-	uaType = truncate(uaType, 10)
-	if lat == "" {
-		lat = "-"
-	}
-	if lon == "" {
-		lon = "-"
-	}
-	if alt == "" {
-		alt = "-"
-	}
-	if speed == "" {
-		speed = "-"
-	}
-
-	// 输出格式: MAC | 标准 | 帧类型 | UA_ID | 纬度 | 经度 | 高度(m) | 速度(m/s) | 信号
-	// 协议管理信息单独一行输出
-	fmt.Printf("%s%-20s%s %s%-10s%s %s%-8s%s %s%-14s%s %-22s %-12s %-10s %-8s %-8s %s%d dBm%s\n",
-		colorYellow, mac, colorReset,
-		stdColor, standard, colorReset,
-		colorCyan, transport, colorReset,
-		colorGreen, band, colorReset,
-		uaType+" | "+uasID,
-		lat, lon, alt, speed,
-		colorWhite, signal, colorReset,
-	)
-	// OUI 信息行
-	fmt.Printf("  %s└─ OUI: %s%s\n", colorGray, oui, colorReset)
-}
-
-func printStats() {
-	elapsed := time.Since(stats.startTime)
-	fmt.Printf("\n%s══════════════════════════════════════%s\n", colorCyan, colorReset)
-	fmt.Printf("%s  总包数: %d  无人机包: %d  唯一无人机: %d  耗时: %v%s\n",
-		colorBold, stats.totalPackets, stats.dronePackets, len(stats.uniqueDrones), elapsed.Round(time.Millisecond), colorReset)
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-1] + "…"
-}
-
-var _ = binary.LittleEndian
