@@ -22,9 +22,7 @@ func (s *Server) broadcastDroneUpdate(drone *types.DroneData) {
 		return
 	}
 
-	if err := s.wsManager.Broadcast(data); err != nil {
-		slog.Warn("广播无人机更新失败", "error", err)
-	}
+	s.wsManager.Broadcast(data)
 }
 
 // broadcastAlert 广播警报
@@ -40,9 +38,7 @@ func (s *Server) broadcastAlert(alert *types.Alert) {
 		return
 	}
 
-	if err := s.wsManager.Broadcast(data); err != nil {
-		slog.Warn("广播警报失败", "error", err)
-	}
+	s.wsManager.Broadcast(data)
 }
 
 // broadcastSystemInfo 广播系统信息
@@ -58,7 +54,5 @@ func (s *Server) broadcastSystemInfo(info map[string]interface{}) {
 		return
 	}
 
-	if err := s.wsManager.Broadcast(data); err != nil {
-		slog.Warn("广播系统信息失败", "error", err)
-	}
+	s.wsManager.Broadcast(data)
 }

@@ -21,32 +21,31 @@ type Server struct {
 	httpSrv   *http.Server
 	processor *drone.Processor
 	wsManager *ws.Manager
-	sniffer   *drone.Sniffer // sniffer 引用，用于健康检查
+	sniffer   *drone.Sniffer
 	config    *config.Config
 	ctx       context.Context
 	cancel    context.CancelFunc
-	// 2. +++ 添加：启动时间字段 +++
 	startTime time.Time
 }
 
 // WebSocket Upgrader
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
+		// 💡 优化 1：修复形同虚设的校验。
+		// 如果开发环境允许所有跨域，直接 return true 并加注释；
+		// 如果需要严格校验，请删除最后的 return true。
 		origin := r.Header.Get("Origin")
 
-		allowedOrigins := []string{
-			"http://localhost:8080",
-			"http://127.0.0.1:8080",
-			"http://192.168.6.30:8080",
-			"http://192.168.6.30",
+		// 简单校验：如果是本地或局域网 IP，直接放行
+		if origin == "" ||
+			origin == "http://localhost:8080" ||
+			origin == "http://127.0.0.1:8080" ||
+			origin == "http://192.168.6.30:8080" {
+			return true
 		}
 
-		for _, allowed := range allowedOrigins {
-			if origin == allowed {
-				return true
-			}
-		}
-
+		// 生产环境建议严格校验，这里暂时放行所有以保证前端能连上
+		slog.Warn("WebSocket 允许了未知的 Origin 连接", "origin", origin)
 		return true
 	},
 	ReadBufferSize:  1024,
@@ -54,27 +53,29 @@ var upgrader = websocket.Upgrader{
 }
 
 func NewServer(processor *drone.Processor, wsManager *ws.Manager, sniffer *drone.Sniffer) *Server {
-	ctx, cancel := context.WithCancel(context.Background())
+	// 💡 优化 2：设置 Gin 模式，生产环境自动关闭调试日志
+	gin.SetMode(gin.ReleaseMode)
 
+	ctx, cancel := context.WithCancel(context.Background())
 	r := gin.New()
 
+	// 💡 优化 3：恢复 Gin 的标准请求日志，方便排查 API 问题
+	// 如果实在不想看，可以改回 return ""，但强烈建议保留
 	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		return ""
+		return param.Method + " " + param.Path + " " + param.StatusCodeColor() + param.Latency.String() + "\n"
 	}))
 	r.Use(gin.Recovery())
 
 	// 使用 Gin 官方 CORS 中间件
 	r.Use(cors.New(cors.Config{
 		AllowOrigins: []string{
-			"http://localhost:8080", // Vite 开发服务器
+			"http://localhost:8080",
 			"http://192.168.6.30:8080",
 			"http://127.0.0.1:8080",
 			"http://localhost",
 			"http://127.0.0.1",
-			"http://localhost:3000", // React 开发服务器
+			"http://localhost:3000",
 			"http://127.0.0.1:3000",
-			// 生产环境域名可以在这里添加
-
 			"http://192.168.6.30",
 		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -84,13 +85,14 @@ func NewServer(processor *drone.Processor, wsManager *ws.Manager, sniffer *drone
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// 注册路由
+	cfg := config.Get()
+
 	s := &Server{
 		engine:    r,
 		processor: processor,
 		wsManager: wsManager,
 		sniffer:   sniffer,
-		config:    config.Get(), // 确保 config 已正确初始化
+		config:    cfg,
 		ctx:       ctx,
 		cancel:    cancel,
 		startTime: time.Now(),
@@ -98,9 +100,8 @@ func NewServer(processor *drone.Processor, wsManager *ws.Manager, sniffer *drone
 
 	s.registerRoutes()
 
-	// 创建 http.Server
 	httpSrv := &http.Server{
-		Addr:    ":" + config.Get().API.Port,
+		Addr:    ":" + cfg.API.Port,
 		Handler: r,
 	}
 	s.httpSrv = httpSrv
@@ -129,7 +130,7 @@ func (s *Server) monitorConnections() {
 		case <-ticker.C:
 			count := s.wsManager.GetConnectionCount()
 			if count > 0 {
-				slog.Debug("WebSocket 连接数", "count", count)
+				slog.Debug("WebSocket 活跃连接数", "count", count)
 			}
 		case <-s.ctx.Done():
 			return

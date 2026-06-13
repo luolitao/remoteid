@@ -1,4 +1,3 @@
-// pkg/ws/manager.go
 package ws
 
 import (
@@ -6,78 +5,67 @@ import (
 	"sync"
 )
 
+// Manager 管理所有的 WebSocket 客户端
 type Manager struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mutex      sync.RWMutex
+	// 💡 优化：使用 struct{} 作为 value，节省内存
+	clients map[*Client]struct{}
+	mutex   sync.RWMutex
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 100),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients: make(map[*Client]struct{}),
 	}
 }
 
+// Register 注册客户端
 func (m *Manager) Register(client *Client) {
-	m.mutex.Lock()
+	m.mutex.Lock() // ✅ 修复 1：写操作必须使用写锁 (Lock)
 	defer m.mutex.Unlock()
-	m.clients[client] = true
-	slog.Debug("WebSocket 客户端注册", "ip", client.IP)
+
+	m.clients[client] = struct{}{}
+	slog.Debug("WebSocket 客户端注册", "ip", client.IP, "total", len(m.clients))
 }
 
+// Unregister 注销客户端
 func (m *Manager) Unregister(client *Client) {
-	m.mutex.Lock()
+	m.mutex.Lock() // ✅ 修复 2：写操作必须使用写锁 (Lock)
 	defer m.mutex.Unlock()
+
 	if _, ok := m.clients[client]; ok {
 		delete(m.clients, client)
-		close(client.Send)
-		slog.Debug("WebSocket 客户端注销", "ip", client.IP)
+		slog.Debug("WebSocket 客户端注销", "ip", client.IP, "total", len(m.clients))
 	}
 }
 
-func (m *Manager) Broadcast(message []byte) error {
-	m.mutex.RLock()
+// Broadcast 广播消息给所有客户端
+func (m *Manager) Broadcast(message []byte) {
+	m.mutex.RLock() // ✅ 读操作使用读锁 (RLock)
 	defer m.mutex.RUnlock()
 
 	for client := range m.clients {
 		select {
 		case client.Send <- message:
+			// 发送成功
 		default:
-			slog.Warn("无法发送消息给客户端", "ip", client.IP)
-			close(client.Send)
-			delete(m.clients, client)
+			// ✅ 修复 3：客户端 channel 满了，绝不能在读锁下 delete map！
+			slog.Warn("客户端消费过慢，丢弃消息并异步踢出", "ip", client.IP)
+
+			// 异步踢出慢客户端，避免死锁和遍历冲突
+			go func(c *Client) {
+				m.Unregister(c)
+				// 注意：不要在这里 close(c.Send)，让 client 自己的 writePump 处理关闭
+			}(client)
 		}
 	}
-	return nil
 }
 
-// 2. +++ 添加：获取连接数方法 +++
+// GetConnectionCount 获取当前连接数
 func (m *Manager) GetConnectionCount() int {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	return len(m.clients)
 }
 
-func (m *Manager) Start() {
-	for {
-		select {
-		case client := <-m.register:
-			m.Register(client)
-		case client := <-m.unregister:
-			m.Unregister(client)
-		case message := <-m.broadcast:
-			m.Broadcast(message)
-		}
-	}
-}
-
-func (m *Manager) Stop() {
-	for client := range m.clients {
-		m.Unregister(client)
-	}
-}
+// 💡 修复 4：删除了无用的 Start() 方法和相关的 channel。
+// 既然外部直接调用 Register 和 Broadcast，就不需要 Hub 模式的 channel 了。

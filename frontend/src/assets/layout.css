@@ -1,0 +1,308 @@
+<style>
+/* =========================================================================
+   tar1090-style layout CSS — all non-scoped for map container sizing
+   ========================================================================= */
+
+#layout_container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- 右侧边栏 ---- */
+#sidebar_container {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+  border-left: 1px solid var(--BGCOLOR2);
+  background: var(--BGCOLOR1);
+}
+
+#sidebar_header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px;
+  flex-shrink: 0;
+  background-color: var(--ACCENT);
+  color: #FFF;
+}
+
+#header_title {
+  color: #FFF;
+  font-weight: bold;
+  font-size: var(--FS2);
+}
+
+#header_count {
+  font-size: var(--FS1);
+  opacity: 0.8;
+}
+
+/* 搜索栏 */
+#search_bar {
+  padding: 4px 6px;
+  flex-shrink: 0;
+  background: var(--BGCOLOR1);
+  border-bottom: 1px solid var(--BGCOLOR2);
+}
+
+#search_input {
+  width: 100%;
+  height: 22px;
+  padding: 0 4px;
+  font-size: var(--FS1);
+  background: #fff;
+  border: 1px solid var(--BGCOLOR2);
+  outline: none;
+}
+
+/* 侧边栏表格区域 */
+#sidebar_canvas {
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  min-height: 0;
+}
+
+#planesTable {
+  width: 100%;
+  font-size: var(--FS2);
+  white-space: nowrap;
+  border-collapse: collapse;
+}
+
+.aircraft_table_header th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--ACCENT);
+  color: #FFF;
+  font-weight: normal;
+  padding: 4px 4px;
+  box-shadow: 0 2px 2px -1px rgba(0,0,0,.5);
+}
+
+#planesTable td {
+  padding: 2px 4px;
+  cursor: default;
+}
+
+.icaoCodeColumn {
+  font-family: monospace;
+  text-transform: uppercase;
+}
+
+/* 表格行颜色 */
+.plane_table_row.stale_row {
+  opacity: 0.45;
+}
+
+.plane_table_row.noncompliant_row {
+  background-color: #ffe0e0;
+}
+
+.plane_table_row.astm_row {
+  background-color: #e0f0ff;
+}
+
+/* 侧边栏底部 */
+#sidebar_footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--BGCOLOR2);
+  background: var(--BGCOLOR1);
+}
+
+/* ---- 拖拽手柄 ---- */
+#splitter {
+  flex-shrink: 0;
+  width: 4px;
+  background: var(--BGCOLOR2);
+  cursor: ew-resize;
+  z-index: 50;
+}
+
+/* ---- 地图区域 ---- */
+#map_container {
+  flex: 1 1 auto;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+
+#map_canvas {
+  position: absolute;
+  inset: 0;
+}
+
+#map_canvas .leaflet-container {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+/* ---- 右上角按钮组 ---- */
+#header_side {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+}
+
+.toggle_sidebar_button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 38px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.85);
+  border: 1px solid var(--BGCOLOR2);
+  cursor: pointer;
+  color: var(--TXTCOLOR2);
+}
+
+/* ---- 设置面板 (tar1090 #settings_infoblock) ---- */
+#settings_infoblock {
+  position: absolute;
+  top: 1%;
+  left: 1%;
+  z-index: 9999;
+  max-height: 90%;
+  overflow-y: auto;
+  background: var(--BGCOLOR1);
+  border: 1px solid var(--BGCOLOR2);
+  border-radius: 2px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  min-width: 320px;
+  max-width: 500px;
+}
+
+#settings_header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background-color: var(--ACCENT);
+  color: #FFF;
+}
+
+#settings_content {
+  display: flex;
+  gap: 16px;
+  padding: 10px;
+}
+
+.settingsColumn {
+  flex: 1;
+  min-width: 140px;
+}
+
+.settingsSectionTitle {
+  font-weight: bold;
+  font-size: var(--FS2);
+  color: var(--TXTCOLOR1);
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--BGCOLOR2);
+  padding-bottom: 2px;
+}
+
+.settingsCheckboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: var(--FS1);
+  padding: 1px 0;
+  white-space: nowrap;
+}
+
+.settingsCheckboxLabel input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+}
+
+/* ---- 侧边栏内无人机详情 ---- */
+#sidebar_drone_detail {
+  flex-shrink: 0;
+  max-height: 45vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--BGCOLOR2);
+  background: var(--BGCOLOR1);
+  font-size: var(--FS2);
+}
+
+/* ---- infoBlockSection row clearfix ---- */
+#credits {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0.7;
+  z-index: 99;
+  font-size: var(--FS1);
+  color: var(--TXTCOLOR1);
+  pointer-events: none;
+}
+
+/* ---- 回放条 ---- */
+#replayBar {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.15);
+  background: var(--BGCOLOR1);
+  border: 1px solid var(--BGCOLOR2);
+  font-size: var(--FS1);
+}
+
+/* ---- 警报面板 ---- */
+#alerts_panel {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  z-index: 200;
+  border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  overflow: hidden;
+  background: var(--BGCOLOR1);
+  border: 1px solid var(--BGCOLOR2);
+  max-height: 220px;
+  overflow-y: auto;
+  width: 280px;
+}
+
+/* ---- infoBlockSection row clearfix ---- */
+.infoRow {
+  clear: both;
+}
+
+.infoHeading {
+  display: inline;
+  margin-right: 4px;
+}
+
+.infoData {
+  float: right;
+  text-align: right;
+}
+
+.infoBlockSection {
+  padding: 6px 8px;
+}
+</style>

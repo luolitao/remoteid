@@ -29,7 +29,7 @@ export const fetchActiveDrones = async () => {
  * @returns {Promise<Object>}
  */
 export const fetchDroneDetail = async (mac) => {
-  const response = await apiClient.get(`/drones/${mac}/`)
+  const response = await apiClient.get(`/drones/${mac}`)
   return response.data
 }
 

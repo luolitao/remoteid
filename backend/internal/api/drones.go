@@ -51,11 +51,6 @@ func (s *Server) getTrajectory(c *gin.Context) {
 		return
 	}
 
-	// 确保 Points 不为 nil
-	if trajectory == nil {
-		trajectory = []types.PositionRecord{}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"trajectory": trajectory,
 		"points":     len(trajectory),

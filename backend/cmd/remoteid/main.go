@@ -106,17 +106,65 @@ func main() {
 					return
 				}
 
-				totalReceived.Add(1)
-				intervalCount++ // 窗口内计数 +1
+				if data.Telemetry == nil {
+					continue
+				}
+				t := data.Telemetry
 
-				msgBytes, err := json.Marshal(data)
+				totalReceived.Add(1)
+				intervalCount++
+
+				// 🎯 核心修复 1：构建一个完全扁平化的数据对象
+				flatData := map[string]interface{}{
+					"mac":                data.MACAddress,
+					"uas_id":             t.UASID,
+					"operator_id":        t.OperatorID,
+					"latitude":           t.Latitude,
+					"longitude":          t.Longitude,
+					"lat":                t.Latitude, // 兼容前端各种奇葩命名
+					"lng":                t.Longitude,
+					"altitude":           t.Altitude,
+					"height":             t.Height,
+					"speed":              t.Speed,
+					"heading":            t.Heading,
+					"operator_latitude":  t.OperatorLat,
+					"operator_longitude": t.OperatorLng,
+					"protocol":           t.Protocol,
+					"rssi":               data.RSSI,
+				}
+
+				// 安全处理时间格式化，防止前端解析报错
+				if !data.LastSeen.IsZero() {
+					flatData["last_seen"] = data.LastSeen.Format(time.RFC3339)
+				}
+				// 如果 TrackedDrone 有 FirstSeen 字段，也可以加上：
+				// if !data.FirstSeen.IsZero() {
+				// 	flatData["first_seen"] = data.FirstSeen.Format(time.RFC3339)
+				// }
+
+				// 🎯 核心修复 2：构建最终消息，提供 3 层访问路径防护
+				wrappedMsg := map[string]interface{}{
+					"type":  "drone_update",
+					"data":  flatData, // 防护层 1：兼容前端 const { latitude } = msg.data
+					"drone": flatData, // 防护层 2：兼容前端 const { latitude } = msg.drone
+				}
+
+				// 防护层 3：将所有字段也展平到顶层，兼容前端 const { latitude } = msg
+				for k, v := range flatData {
+					wrappedMsg[k] = v
+				}
+
+				msgBytes, err := json.Marshal(wrappedMsg)
 				if err != nil {
 					slog.Error("WebSocket 序列化失败", "error", err)
 					continue
 				}
 
-				latestSample = string(msgBytes) // 更新最新样本
-				wsManager.Broadcast(msgBytes)   // 100% 广播给前端
+				latestSample = string(msgBytes)
+
+				go func(bytes []byte) {
+					wsManager.Broadcast(bytes)
+				}(msgBytes)
 
 			case <-ticker.C:
 				// ⏱️ 定时触发汇总

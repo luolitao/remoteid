@@ -15,7 +15,8 @@ func (m *Manager) BroadcastMessage(msg interface{}) error {
 		slog.Warn("消息序列化失败", "error", err)
 		return err
 	}
-	return m.Broadcast(data)
+	m.Broadcast(data) // ✅ 直接调用，不接收返回值
+	return nil        // ✅ 然后返回 nil 表示成功
 }
 
 // BroadcastError 广播错误消息
