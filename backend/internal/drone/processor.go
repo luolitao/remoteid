@@ -1,7 +1,7 @@
 package drone
 
 import (
-	"encoding/hex"
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -37,23 +37,81 @@ func NewProcessor(broadcastCh chan *TrackedDrone) *Processor {
 	return p
 }
 
-// ProcessPacket 解析并更新内部状态机
+const MaxAlertsLimit = 1000
+
+func (p *Processor) CreateAlert(alert *types.Alert) error {
+	p.alertsMu.Lock()
+	defer p.alertsMu.Unlock()
+
+	p.alerts = append(p.alerts, alert)
+
+	// 内存保护：超出限制丢弃最旧的
+	if len(p.alerts) > MaxAlertsLimit {
+		p.alerts = p.alerts[len(p.alerts)-MaxAlertsLimit:]
+	}
+	return nil
+}
+
+// StartWorker 启动业务处理循环（从 Channel 读取并解析）
+// processor.go 新增/替换
+func (p *Processor) StartWorker(ctx context.Context, inputCh <-chan RawPacket) {
+	slog.Info("🚀 处理器 Worker 已启动，开始消费数据包...")
+	consumed := 0
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("Worker 收到退出信号，停止消费", "total_consumed", consumed)
+			return
+		case pkt, ok := <-inputCh:
+			if !ok {
+				return
+			}
+			// ✅ 核心消费逻辑
+			p.ProcessPacket(pkt.Payload, pkt.MAC, pkt.RSSI)
+			consumed++
+
+		case <-tick.C:
+			// 每 5 秒打印一次消费速率，方便监控性能瓶颈
+			slog.Info("📊 Worker 消费统计", "rate_per_sec", float64(consumed)/5.0, "total", consumed)
+			consumed = 0
+		}
+	}
+}
+
+// processor.go - ProcessPacket() 函数
 func (p *Processor) ProcessPacket(payload []byte, mac string, rssi int) {
 	telemetry, err := DefaultRegistry.RouteAndParse(payload)
-	if err != nil || telemetry == nil || (telemetry.Latitude == 0 && telemetry.Longitude == 0) {
-		slog.Warn("潜在候选包但解析不全", "MAC", mac, "Payload", hex.EncodeToString(payload))
+
+	// 1. 过滤无效解析结果
+	if err != nil || telemetry == nil {
 		return
 	}
 
+	// 2. 软过滤：仅拦截明显越界的噪点，放行 (0,0) 供模拟器/起飞点调试
+	if (telemetry.Latitude < -90 || telemetry.Latitude > 90) ||
+		(telemetry.Longitude < -180 || telemetry.Longitude > 180) {
+		return
+	}
+
+	// 3. 确定唯一标识
 	droneKey := telemetry.UASID
 	if droneKey == "" {
 		droneKey = "MAC_" + mac
 	}
 
+	// 4. 更新内存状态机
 	p.mu.Lock()
 	_, alreadyReported := p.reportedDrones[droneKey]
 	if !alreadyReported {
 		p.reportedDrones[droneKey] = struct{}{}
+		slog.Info("🚨 [发现新无人机上线]",
+			"DroneKey", droneKey, "Protocol", telemetry.Protocol,
+			"MAC", mac, "RSSI", rssi,
+			"Lat", telemetry.Latitude, "Lng", telemetry.Longitude,
+		)
 	}
 
 	drone := &TrackedDrone{
@@ -65,41 +123,69 @@ func (p *Processor) ProcessPacket(payload []byte, mac string, rssi int) {
 	p.drones[droneKey] = drone
 	p.mu.Unlock()
 
-	if !alreadyReported {
-		slog.Info("🚨 [发现新无人机上线]",
-			"DroneKey", droneKey, "Protocol", telemetry.Protocol,
-			"MAC", mac, "RSSI", rssi,
-			"Lat", telemetry.Latitude, "Lng", telemetry.Longitude,
-		)
+	// 5. 💾 关键修复：持久化到 SQLite（WAL 模式可承受高频写入）
+	pos := &types.Position{
+		Latitude:  telemetry.Latitude,
+		Longitude: telemetry.Longitude,
+		Altitude:  telemetry.Altitude,
+		Speed:     telemetry.Speed,
+		Heading:   telemetry.Heading,
+		Timestamp: time.Now().UTC(),
+	}
+	if err := db.SavePosition(mac, pos, telemetry.Protocol); err != nil {
+		slog.Debug("轨迹落盘失败", "mac", mac, "error", err)
 	}
 
+	// 6. 广播给前端 WebSocket
 	select {
 	case p.broadcastCh <- drone:
 	default:
+		// 通道满时丢弃，保护主循环不阻塞
 	}
 }
 
-func (p *Processor) Close() { close(p.stopCh) }
-
+// startStateCleaner 定期清理过期无人机 & 防止 reportedDrones 内存泄漏
 func (p *Processor) startStateCleaner(interval, timeout time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
-			p.mu.Lock()
 			now := time.Now()
+			p.mu.Lock()
+
+			// 清理离线无人机
 			for id, drone := range p.drones {
 				if now.Sub(drone.LastSeen) > timeout {
 					delete(p.drones, id)
+					// 同步清理上线记录，允许无人机重新触发“上线”日志
+					delete(p.reportedDrones, id)
 				}
 			}
 			p.mu.Unlock()
+
 		case <-p.stopCh:
 			return
 		}
 	}
 }
+
+// 新增：定期清理不再活跃的 reportedDrones
+func (p *Processor) cleanReportedDrones() {
+	// 如果 map 超过阈值，清理不在 drones map 中的 key
+	if len(p.reportedDrones) > 5000 {
+		p.mu.RLock()
+		for key := range p.reportedDrones {
+			if _, exists := p.drones[key]; !exists {
+				delete(p.reportedDrones, key)
+			}
+		}
+		p.mu.RUnlock()
+	}
+}
+
+func (p *Processor) Close() { close(p.stopCh) }
 
 // =================================================================
 // 🎯 核心重构：提取公共转换函数，彻底消灭 JSON 互转！
@@ -214,14 +300,6 @@ func (p *Processor) GetAlerts(filter string) []*types.Alert {
 		// 如果 types.Alert 有 Message 字段，可以加上： || strings.Contains(alert.Message, filter)
 	}
 	return filtered
-}
-
-// CreateAlert 创建告警
-func (p *Processor) CreateAlert(alert *types.Alert) error {
-	p.alertsMu.Lock()
-	defer p.alertsMu.Unlock()
-	p.alerts = append(p.alerts, alert)
-	return nil
 }
 
 // GetAlertByID 根据 ID 获取告警

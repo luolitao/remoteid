@@ -2,7 +2,10 @@ package drone
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/gopacket"
@@ -10,10 +13,19 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
+// RawPacket 用于 Sniffer 到 Processor 的异步传输
+type RawPacket struct {
+	Payload []byte
+	MAC     string
+	RSSI    int
+}
+
+// 在 Sniffer 结构体中添加 Channel
 type Sniffer struct {
 	device    string
 	processor *Processor
 	handle    *pcap.Handle
+	PacketCh  chan RawPacket // 新增：缓冲抓到的包
 }
 
 func NewSniffer(device string, processor *Processor) *Sniffer {
@@ -30,6 +42,7 @@ func (s *Sniffer) Start(ctx context.Context) error {
 		return err
 	}
 	s.handle = handle
+	s.PacketCh = make(chan RawPacket, 500) // 500 缓冲池，抵抗突发流量
 	defer s.handle.Close()
 
 	// 2. 硬件级 BPF 过滤：只放行 Beacon 管理帧
@@ -52,6 +65,11 @@ func (s *Sniffer) Start(ctx context.Context) error {
 
 	packetSource := gopacket.NewPacketSource(s.handle, s.handle.LinkType())
 
+	// 启动解析 Worker (建议放在 Processor 初始化中)
+	// go s.processor.StartWorker(ctx, s.PacketCh)
+	// sniffer.go -> Start() 函数内
+	var packetCount atomic.Int64
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -60,6 +78,19 @@ func (s *Sniffer) Start(ctx context.Context) error {
 			if packet == nil {
 				continue
 			}
+
+			// ✅ 新增：打印原始包统计（每 100 个包打印一次，避免刷屏）
+			// ✅ 正确用法：直接调用方法，无需取地址
+			packetCount.Add(1)
+
+			// 每 100 包打印一次统计
+			if packetCount.Load()%100 == 0 { // ✅ 用 .Load() 读取
+				slog.Debug("📦 抓包统计",
+					"total", packetCount.Load(),
+					"device", s.device)
+			}
+
+			// ... 原有解析逻辑 ...
 
 			// 解析基础头
 			err := parser.DecodeLayers(packet.Data(), &decodedLayers)
@@ -92,6 +123,7 @@ func (s *Sniffer) Start(ctx context.Context) error {
 			// 跳过前 12 字节，剩下的全是 TLV 格式的 Tags (Information Elements)
 			tagsData := payload[12:]
 			s.parseTagsAndProcess(tagsData, macStr, rssi)
+
 		}
 	}
 }
@@ -125,20 +157,29 @@ func (s *Sniffer) parseTagsAndProcess(tagsData []byte, mac string, rssi int) {
 			}
 
 			// 💡 OUI 早期过滤：至少需要 4 字节 (3字节OUI + 1字节类型)
+			// sniffer.go -> parseTagsAndProcess()
 			if len(ridPayload) >= 4 {
-				isDrone := false
+				oui := fmt.Sprintf("%02X:%02X:%02X", ridPayload[0], ridPayload[1], ridPayload[2])
+				typ := ridPayload[3]
 
-				// 规则 1: 现代 ASD-STAN / GB46750 标准 (OUI: FA:0B:BC, Type: 0x0D)
+				// ✅ 新增：打印所有 Vendor Specific 元素的 OUI+Type
+				slog.Debug("🔍 Vendor Element",
+					"mac", mac,
+					"oui", oui,
+					"type", fmt.Sprintf("0x%02X", typ),
+					"len", len(ridPayload),
+				)
+
+				isDrone := false
 				if ridPayload[0] == 0xFA && ridPayload[1] == 0x0B && ridPayload[2] == 0xBC && ridPayload[3] == 0x0D {
 					isDrone = true
+					// slog.Info("🎯 命中 ASTM OUI", "mac", mac)
 				} else if ridPayload[0] == 0x06 && ridPayload[1] == 0x05 && ridPayload[2] == 0x04 && ridPayload[3] == 0xFD {
-					// 规则 2: 早期 ASTM 标准 (OUI: 06:05:04, Type: 0xFD)
 					isDrone = true
+					slog.Info("🎯 命中 GB OUI", "mac", mac)
 				}
 
-				// 如果确认是无人机 OUI，才送入 Processor 处理
 				if isDrone {
-					// slog.Info("🎯 命中无人机 OUI，送入处理！", "MAC", mac, "| 长度:", len(ridPayload), " 字节 | 原始Hex:", hex.EncodeToString(ridPayload))
 					s.processor.ProcessPacket(ridPayload, mac, rssi)
 				}
 			}

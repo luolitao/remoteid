@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,32 +36,18 @@ func init() {
 }
 
 func main() {
-	cfgFile := flag.String("config", "config.yaml", "配置文件路径")
+	// 1. 注册命令行参数
+	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	ifaceFlag := flag.String("iface", "", "指定网络监听网卡接口 (例如 wlan0, wlan2)")
 	flag.Parse()
-
 	slog.Info("RemoteID 监控系统正在启动...")
 
-	// 智能探测配置文件
-	targetConfig := *cfgFile
-	if targetConfig == "config.yaml" {
-		if _, err := os.Stat("config.yaml"); os.IsNotExist(err) {
-			if _, errYml := os.Stat("config.yml"); errYml == nil {
-				targetConfig = "config.yml"
-				slog.Info("未检测到 config.yaml，自动适配并加载同路径下的 config.yml")
-			}
-		}
-	}
-
-	if err := config.Init(targetConfig); err != nil {
-		slog.Error("加载配置文件失败", "path", targetConfig, "error", err)
-		os.Exit(1)
-	}
-
+	// 2. 加载配置
+	_ = configPath // 预留：若 config 包支持动态路径可在此传入
 	cfg := config.Get()
 
-	// 初始化数据库
-	dbPath := "remoteid.db"
+	// 3. 初始化数据库
+	dbPath := "./remoteid.db"
 	if cfg.Database.Path != "" {
 		dbPath = cfg.Database.Path
 	}
@@ -67,13 +55,14 @@ func main() {
 		slog.Error("数据库初始化失败", "error", err)
 		os.Exit(1)
 	}
+	defer db.Close()
 	slog.Info("数据库初始化成功", "path", dbPath)
 
-	// 核心管道与组件装配
+	// 4. 核心管道与组件装配
 	broadcastCh := make(chan *drone.TrackedDrone, 2048)
 	processor := drone.NewProcessor(broadcastCh)
 
-	// 网卡优先级抉择
+	// 5. 网卡优先级抉择
 	networkDevice := "wlan1"
 	if *ifaceFlag != "" {
 		networkDevice = *ifaceFlag
@@ -88,71 +77,129 @@ func main() {
 	sniffer := drone.NewSniffer(networkDevice, processor)
 	wsManager := ws.NewManager()
 
-	// 💡 优化点：参考 ridparse 的在线监控思想，对数据流向进行结构化计数和监控
-	var totalReceived int64
+	// 6. 数据广播协程（优化：5秒统计 + 扁平化 JSON + 航向归一化）
 	go func() {
 		slog.Info("WebSocket 广播转发协程已启动")
-		for data := range broadcastCh {
-			totalReceived++
-			// 每收到 1 个或多个无人机数据时，在后台打出高亮调试日志，证明核心链路通了
-			slog.Info("📡 [数据流转成功] 成功接收并解析到无人机 Remote ID 数据！",
-				"ID", data.ID,
-				"MAC", data.MAC,
-				"Lat", data.Latitude,
-				"Lng", data.Longitude,
-				"累计接收总数", totalReceived,
-			)
+		ticker := time.NewTicker(5 * time.Second) // ✅ 改为 5 秒实时监控
+		defer ticker.Stop()
 
-			msgBytes, err := json.Marshal(data)
-			if err != nil {
-				slog.Error("WebSocket 序列化失败", "error", err)
-				continue
+		var totalReceived atomic.Int64
+		var intervalCount int64
+		var latestSample string
+
+		for {
+			select {
+			case data, ok := <-broadcastCh:
+				if !ok {
+					slog.Info("广播管道已关闭，转发协程退出")
+					return
+				}
+				if data.Telemetry == nil {
+					continue
+				}
+
+				t := data.Telemetry
+				totalReceived.Add(1)
+				intervalCount++
+
+				// 🎯 构建完全扁平化的数据对象，兼容前端各种字段名
+				flatData := map[string]interface{}{
+					"mac":                data.MACAddress,
+					"uas_id":             t.UASID,
+					"operator_id":        t.OperatorID,
+					"latitude":           t.Latitude,
+					"longitude":          t.Longitude,
+					"lat":                t.Latitude,
+					"lng":                t.Longitude,
+					"altitude":           t.Altitude,
+					"height":             t.Height,
+					"speed":              t.Speed,
+					"heading":            t.Heading % 360, // ✅ 航向角归一化 (0~359)
+					"operator_latitude":  t.OperatorLat,
+					"operator_longitude": t.OperatorLng,
+					"protocol":           t.Protocol,
+					"rssi":               data.RSSI,
+				}
+				if !data.LastSeen.IsZero() {
+					flatData["last_seen"] = data.LastSeen.Format(time.RFC3339)
+				}
+
+				// 🎯 构建最终消息：提供 3 层访问路径防护
+				wrappedMsg := map[string]interface{}{
+					"type":  "drone_update",
+					"data":  flatData, // 兼容: const { latitude } = msg.data
+					"drone": flatData, // 兼容: const { latitude } = msg.drone
+				}
+				for k, v := range flatData {
+					wrappedMsg[k] = v // 兼容: const { latitude } = msg
+				}
+
+				msgBytes, err := json.Marshal(wrappedMsg)
+				if err != nil {
+					slog.Error("WebSocket 序列化失败", "error", err)
+					continue
+				}
+				latestSample = string(msgBytes)
+				wsManager.Broadcast(msgBytes)
+
+			case <-ticker.C:
+				if intervalCount > 0 {
+					slog.Info("📊 [定时汇总] 数据流转统计",
+						"interval_count", intervalCount,
+						"total_received", totalReceived.Load(),
+						"latest_sample", latestSample,
+					)
+					intervalCount = 0
+				}
 			}
-			wsManager.Broadcast(msgBytes)
 		}
 	}()
 
-	// 初始化并异步启动 API 服务
+	// 7. 初始化并异步启动 API 服务
 	serverHandler := api.NewServer(processor, wsManager, sniffer)
+	errCh := make(chan error, 2)
+
 	go func() {
 		port := ":" + cfg.API.Port
 		slog.Info("API 服务尝试绑定端口", "port", cfg.API.Port)
 		if err := serverHandler.Run(port); err != nil && err != http.ErrServerClosed {
-			slog.Error("API 服务异常退出", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("API 服务异常退出: %w", err)
 		}
 	}()
 
-	// 异步启动 Sniffer 硬件抓包
+	// 8. 异步启动 Sniffer 硬件抓包
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go func() {
 		slog.Info("Sniffer 捕获协程正在启动...", "device", networkDevice)
-		// 提示用户检查网卡状态
-		slog.Info("💡 提示：如果长时期无数据，请确认网卡已通过 'iwconfig' 强转为 Monitor 模式并锁定了正确信道。")
+		slog.Info("💡 提示：如果长期无数据，请确认网卡已切换至 Monitor 模式并锁定正确信道。")
 		if err := sniffer.Start(ctx); err != nil {
-			slog.Error("Sniffer 捕获异常中止", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("Sniffer 捕获异常中止: %w", err)
 		}
 	}()
 
-	// 优雅关闭响应机制
+	// 9. 优雅关闭响应机制
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
 
-	slog.Info("收到停机信号，正在释放资源...")
+	select {
+	case sig := <-quit:
+		slog.Info("收到停机信号", "signal", sig)
+	case err := <-errCh:
+		slog.Error("子组件发生致命错误，触发全局关闭", "error", err)
+	}
 
-	// 设定 5 秒优雅关闭缓冲区
+	slog.Info("正在释放资源...")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
-	cancel()
-	processor.Close()
+	// ✅ 严格按顺序关闭，防止协程死锁或数据丢失
+	cancel()           // 1. 取消 Sniffer 上下文
+	processor.Close()  // 2. 停止 Processor 内部清理 ticker
+	close(broadcastCh) // 3. 关闭广播管道，释放 WS 协程
 	if err := serverHandler.Shutdown(shutdownCtx); err != nil {
 		slog.Error("服务优雅关闭失败", "error", err)
-		os.Exit(1)
 	}
 
 	slog.Info("RemoteID 监控系统已安全停止")
