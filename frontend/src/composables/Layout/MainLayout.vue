@@ -17,13 +17,25 @@
 </template>
 
 <script setup>
-import AppHeader from './AppHeader.vue';
-import AppSidebar from './AppSidebar.vue';
-import GlobalNotification from './GlobalNotification.vue';
+import AppHeader from './AppHeader.vue'
+import AppSidebar from './AppSidebar.vue'
+import GlobalNotification from './GlobalNotification.vue'
 </script>
 
 <style scoped>
-.app-layout { display: flex; flex-direction: column; height: 100vh; }
-.main-content { display: flex; flex: 1; overflow: hidden; }
-.content-area { flex: 1; overflow-y: auto; padding: 20px; }
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+.content-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
 </style>

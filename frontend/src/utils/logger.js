@@ -23,7 +23,7 @@ const logger = {
   },
   error(...args) {
     if (currentLevel <= LOG_LEVELS.error) console.error('[ERROR]', ...args)
-  }
+  },
 }
 
 export default logger

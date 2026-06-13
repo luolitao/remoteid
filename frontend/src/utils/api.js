@@ -10,7 +10,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
-  headers: { 'Content-Type': 'application/json' }
+  headers: { 'Content-Type': 'application/json' },
 })
 
 /**
@@ -74,9 +74,7 @@ export const connectWebSocket = (callbacks = {}) => {
   const apiUrl = import.meta.env.VITE_API_URL
   let wsUrl
   if (apiUrl) {
-    wsUrl = apiUrl
-      .replace(/^http/, 'ws')
-      .replace(/\/api\/?$/, '')
+    wsUrl = apiUrl.replace(/^http/, 'ws').replace(/\/api\/?$/, '')
   } else {
     // 开发模式下使用当前页面的 host（通过 Vite proxy）
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -117,9 +115,10 @@ export const connectWebSocket = (callbacks = {}) => {
 export const dronesToCSV = (dronesData) => {
   const headers = 'MAC,UAS_ID,UA_Type,Latitude,Longitude,Altitude,Speed,Heading,Timestamp\n'
   const rows = dronesData.flatMap(({ drone, positions }) =>
-    (positions || []).map(pos =>
-      `"${drone.mac}","${drone.uas_id}","${drone.ua_type}",${pos.latitude},${pos.longitude},${pos.altitude},${pos.speed},${pos.heading},"${pos.timestamp}"`
-    )
+    (positions || []).map(
+      (pos) =>
+        `"${drone.mac}","${drone.uas_id}","${drone.ua_type}",${pos.latitude},${pos.longitude},${pos.altitude},${pos.speed},${pos.heading},"${pos.timestamp}"`,
+    ),
   )
   return headers + rows.join('\n')
 }

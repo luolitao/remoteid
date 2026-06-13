@@ -30,7 +30,7 @@ module.exports = {
     'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     'no-var': 'error',
     'prefer-const': 'error',
-    'eqeqeq': ['error', 'always', { null: 'ignore' }],
+    eqeqeq: ['error', 'always', { null: 'ignore' }],
 
     // TypeScript 规则
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],

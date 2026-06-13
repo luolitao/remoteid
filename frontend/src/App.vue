@@ -1,30 +1,32 @@
 <template>
   <div id="layout_container">
     <!-- 左侧：地图区域 -->
-    <MapArea 
-      v-show="mapOpen" 
-      ref="mapAreaRef"
-      v-model:selectedDrone="selectedDrone"
-    />
+    <MapArea v-show="mapOpen" ref="mapAreaRef" v-model:selected-drone="selectedDrone" />
 
     <!-- 中间：拖拽分隔条 -->
-    <Splitter 
-      v-show="sidebarOpen && mapOpen" 
-      v-model:width="sidebarWidth" 
-    />
+    <Splitter v-show="sidebarOpen && mapOpen" v-model:width="sidebarWidth" />
 
     <!-- 右侧：侧边栏 -->
-    <Sidebar 
-      v-show="sidebarOpen" 
-      :initialWidth="sidebarWidth"
-      v-model:selectedDrone="selectedDrone"
+    <Sidebar
+      v-show="sidebarOpen"
+      v-model:selected-drone="selectedDrone"
+      :initial-width="sidebarWidth"
       @show-trajectories="mapAreaRef?.showAllTrajectories()"
       @clear-trajectories="mapAreaRef?.clearTrajectories()"
     />
 
     <!-- 隐藏状态下的恢复按钮 -->
-    <button v-if="!mapOpen" @click="mapOpen = true" class="restore-btn left-2" title="Show map">🗺 Map</button>
-    <button v-if="!sidebarOpen" @click="sidebarOpen = true" class="restore-btn right-2" title="Show sidebar">☰ Sidebar</button>
+    <button v-if="!mapOpen" class="restore-btn left-2" title="Show map" @click="mapOpen = true">
+      🗺 Map
+    </button>
+    <button
+      v-if="!sidebarOpen"
+      class="restore-btn right-2"
+      title="Show sidebar"
+      @click="sidebarOpen = true"
+    >
+      ☰ Sidebar
+    </button>
   </div>
 </template>
 
@@ -78,7 +80,7 @@ onUnmounted(() => {
   background: var(--ACCENT, #3182ce);
   color: #fff;
   border: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   cursor: pointer;
   font-size: 13px;
   font-weight: bold;

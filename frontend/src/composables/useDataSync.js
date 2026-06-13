@@ -17,7 +17,7 @@ export function useDataSync() {
       await store.loadActiveDrones()
       store.cleanStaleDrones()
       await store.loadAlerts()
-      
+
       // ✅ 注意：这里没有任何 updateDroneMarkers 的代码！
       // 地图更新由 MapArea.vue 里的 watch 自动触发。
     } catch (e) {

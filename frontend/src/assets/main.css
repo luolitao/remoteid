@@ -9,8 +9,8 @@
 /* ---- CSS Variables (mirroring tar1090's :root) ---- */
 :root {
   --SCALE: 1;
-  --BGCOLOR1: #F8F8F8;
-  --BGCOLOR2: #CCCCCC;
+  --BGCOLOR1: #f8f8f8;
+  --BGCOLOR2: #cccccc;
   --ACCENT: #00596b;
   --FS1: calc(10px * var(--SCALE));
   --FS2: calc(13px * var(--SCALE));
@@ -20,15 +20,19 @@
   --TXTCOLOR3: #101010;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body, #app {
+html,
+body,
+#app {
   margin: 0;
   padding: 0;
   height: 100%;
   width: 100%;
   background: var(--BGCOLOR1);
-  font-family: "Helvetica Neue", Helvetica, Verdana, sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Verdana, sans-serif;
   font-size: var(--FS2);
   line-height: 1.45;
   overflow: hidden;
@@ -37,10 +41,20 @@ html, body, #app {
 }
 
 /* ---- Scrollbar (thin, matching tar1090) ---- */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--BGCOLOR1); }
-::-webkit-scrollbar-thumb { background: var(--BGCOLOR2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #999; }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--BGCOLOR1);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--BGCOLOR2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}
 
 /* ---- Leaflet overrides ---- */
 .leaflet-container {
@@ -58,17 +72,37 @@ html, body, #app {
 .leaflet-popup-content-wrapper {
   background: #fff !important;
   border-radius: 3px !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,.15) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
   font-size: var(--FS2) !important;
 }
-.leaflet-popup-tip { background: #fff !important; }
-.leaflet-popup-content { margin: 8px 10px !important; font-size: var(--FS2) !important; }
+.leaflet-popup-tip {
+  background: #fff !important;
+}
+.leaflet-popup-content {
+  margin: 8px 10px !important;
+  font-size: var(--FS2) !important;
+}
 
 /* ---- Base elements ---- */
-h1, h2, h3, h4 { margin: 0; color: var(--TXTCOLOR1); }
-button { font-family: inherit; font-size: var(--FS2); cursor: pointer; }
-select, input { font-size: var(--FS2); }
-table { border-collapse: collapse; }
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  color: var(--TXTCOLOR1);
+}
+button {
+  font-family: inherit;
+  font-size: var(--FS2);
+  cursor: pointer;
+}
+select,
+input {
+  font-size: var(--FS2);
+}
+table {
+  border-collapse: collapse;
+}
 
 /* ---- tar1090-style utility classes ---- */
 .identLarge {
@@ -109,15 +143,17 @@ table { border-collapse: collapse; }
 
 /* ---- Sidebar button (tar1090 style) ---- */
 .sidebarButton {
-  background-color: #409EDF;
+  background-color: #409edf;
   padding: 4px;
-  color: #FFFFFF;
+  color: #ffffff;
   font-weight: normal;
   font-size: var(--FS2);
   border: none;
   border-radius: 2px;
 }
-.sidebarButton:hover { background-color: #3c6ea3; }
+.sidebarButton:hover {
+  background-color: #3c6ea3;
+}
 
 /* ---- Form controls ---- */
 .formButton {
@@ -126,7 +162,9 @@ table { border-collapse: collapse; }
   background-color: var(--BGCOLOR2);
   border: 1px solid var(--BGCOLOR1);
 }
-.formButton:disabled { color: var(--TXTCOLOR3); }
+.formButton:disabled {
+  color: var(--TXTCOLOR3);
+}
 
 /* ---- Pulse dot ---- */
 .status-dot {
@@ -150,9 +188,16 @@ table { border-collapse: collapse; }
 }
 
 @keyframes dotPulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: .4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* ---- Hidden ---- */
-.hidden { display: none !important; }
+.hidden {
+  display: none !important;
+}

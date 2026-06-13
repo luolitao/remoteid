@@ -4,8 +4,10 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
+	"remoteid-monitor/internal/debug"
 	"remoteid-monitor/pkg/ws"
 
 	"github.com/gin-gonic/gin"
@@ -68,9 +70,37 @@ func (s *Server) registerRoutes() {
 		}
 	}
 
-	// WebSocket 路由
-	s.engine.GET("/ws", s.websocketHandler)
+	// 🆕 调试与监控路由（挂载在 /api/debug 下）
+	debugGroup := s.engine.Group("/api/debug")
+	{
+		debugGroup.GET("/stats", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"total_captured":  debug.TotalCaptured.Load(),
+				"beacon_filtered": debug.BeaconFiltered.Load(),
+				"oui_filtered":    debug.OUIFiltered.Load(),
+				"parse_success":   debug.ParseSuccess.Load(),
+				"parse_failed":    debug.ParseFailed.Load(),
+			})
+		})
 
+		debugGroup.GET("/packets", func(c *gin.Context) {
+			limit := 50
+			if l := c.Query("limit"); l != "" {
+				if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 200 {
+					limit = n
+				}
+			}
+			c.JSON(http.StatusOK, debug.Debugger.Get(limit))
+		})
+
+		debugGroup.POST("/reset", func(c *gin.Context) {
+			debug.ResetStats()
+			c.JSON(http.StatusOK, gin.H{"status": "stats_reset"})
+		})
+	}
+
+	// WebSocket 路由保持不变
+	s.engine.GET("/ws", s.websocketHandler)
 	slog.Info("所有 API 路由已注册")
 }
 

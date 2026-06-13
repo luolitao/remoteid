@@ -2,11 +2,13 @@ package drone
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"sync"
 	"time"
 
 	"remoteid-monitor/internal/db"
+	"remoteid-monitor/internal/debug"
 	"remoteid-monitor/pkg/types"
 )
 
@@ -85,10 +87,26 @@ func (p *Processor) StartWorker(ctx context.Context, inputCh <-chan RawPacket) {
 func (p *Processor) ProcessPacket(payload []byte, mac string, rssi int) {
 	telemetry, err := DefaultRegistry.RouteAndParse(payload)
 
-	// 1. 过滤无效解析结果
+	// ✅ 记录解析失败
 	if err != nil || telemetry == nil {
-		return
+		debug.ParseFailed.Add(1)
+		debug.Debugger.Add(debug.PacketRecord{
+			MAC: mac, RSSI: rssi, Payload: hex.EncodeToString(payload),
+			Stage: "parsed_err", Error: "nil telemetry or parse error",
+		})
+		// 保持原有过滤逻辑
+		if telemetry == nil || (telemetry.Latitude == 0 && telemetry.Longitude == 0) {
+			slog.Warn("潜在候选包但解析不全", "MAC", mac, "Payload", hex.EncodeToString(payload))
+			return
+		}
 	}
+
+	// ✅ 记录解析成功
+	debug.ParseSuccess.Add(1)
+	debug.Debugger.Add(debug.PacketRecord{
+		MAC: mac, RSSI: rssi, Payload: hex.EncodeToString(payload),
+		Stage: "parsed_ok", Protocol: telemetry.Protocol,
+	})
 
 	// 2. 软过滤：仅拦截明显越界的噪点，放行 (0,0) 供模拟器/起飞点调试
 	if (telemetry.Latitude < -90 || telemetry.Latitude > 90) ||

@@ -1,4 +1,3 @@
-<style>
 /* =========================================================================
    tar1090-style layout CSS — all non-scoped for map container sizing
    ========================================================================= */
@@ -27,11 +26,11 @@
   padding: 8px 8px;
   flex-shrink: 0;
   background-color: var(--ACCENT);
-  color: #FFF;
+  color: #fff;
 }
 
 #header_title {
-  color: #FFF;
+  color: #fff;
   font-weight: bold;
   font-size: var(--FS2);
 }
@@ -79,10 +78,10 @@
   top: 0;
   z-index: 10;
   background-color: var(--ACCENT);
-  color: #FFF;
+  color: #fff;
   font-weight: normal;
   padding: 4px 4px;
-  box-shadow: 0 2px 2px -1px rgba(0,0,0,.5);
+  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.5);
 }
 
 #planesTable td {
@@ -163,7 +162,7 @@
   width: 32px;
   height: 38px;
   border-radius: 2px;
-  background: rgba(255,255,255,.85);
+  background: rgba(255, 255, 255, 0.85);
   border: 1px solid var(--BGCOLOR2);
   cursor: pointer;
   color: var(--TXTCOLOR2);
@@ -180,7 +179,7 @@
   background: var(--BGCOLOR1);
   border: 1px solid var(--BGCOLOR2);
   border-radius: 2px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   min-width: 320px;
   max-width: 500px;
 }
@@ -191,7 +190,7 @@
   justify-content: space-between;
   padding: 8px 10px;
   background-color: var(--ACCENT);
-  color: #FFF;
+  color: #fff;
 }
 
 #settings_content {
@@ -224,7 +223,7 @@
   white-space: nowrap;
 }
 
-.settingsCheckboxLabel input[type="checkbox"] {
+.settingsCheckboxLabel input[type='checkbox'] {
   width: 12px;
   height: 12px;
   margin: 0;
@@ -265,7 +264,7 @@
   gap: 6px;
   padding: 4px 8px;
   border-radius: 2px;
-  box-shadow: 0 2px 6px rgba(0,0,0,.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
   background: var(--BGCOLOR1);
   border: 1px solid var(--BGCOLOR2);
   font-size: var(--FS1);
@@ -278,7 +277,7 @@
   left: 6px;
   z-index: 200;
   border-radius: 2px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   overflow: hidden;
   background: var(--BGCOLOR1);
   border: 1px solid var(--BGCOLOR2);
@@ -305,4 +304,3 @@
 .infoBlockSection {
   padding: 6px 8px;
 }
-</style>
