@@ -7,37 +7,6 @@ const props = defineProps({
   width: { type: Number, default: 350 },
 })
 const emit = defineEmits(['update:width'])
-
-// ---- 侧边栏拖拽（增强版：防止文本选中中断） ----
-let isResizing = false
-
-const startResize = (e) => {
-  isResizing = true
-  // 🎯 核心修复：拖拽时禁用文本选中，并改变鼠标指针
-  document.body.style.userSelect = 'none'
-  document.body.style.cursor = 'ew-resize'
-
-  document.addEventListener('mousemove', doResize)
-  document.addEventListener('mouseup', stopResize)
-  e.preventDefault() // 阻止默认行为
-}
-
-const doResize = (e) => {
-  if (!isResizing) return
-  // 计算右侧边栏宽度，并限制在 250px 到 600px 之间
-  const w = Math.max(250, Math.min(600, window.innerWidth - e.clientX))
-  sidebarWidth.value = w
-}
-
-const stopResize = () => {
-  isResizing = false
-  // 🎯 核心修复：恢复文本选中和默认鼠标指针
-  document.body.style.userSelect = ''
-  document.body.style.cursor = ''
-
-  document.removeEventListener('mousemove', doResize)
-  document.removeEventListener('mouseup', stopResize)
-}
 </script>
 
 <style scoped>
