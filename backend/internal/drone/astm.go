@@ -54,7 +54,7 @@ func (p *RemoteIDParser) decodeASTMLocation(payload []byte, data map[string]stri
 		speedFactor = 0.75
 	}
 	speedH := float64(payload[2]) * speedFactor
-	speedV := float64(int8(payload[3])-64) * 0.5
+	speedV := float64(int8(payload[3])) * 0.5
 
 	data["status"] = lookupName(astmStatusNames, int(status))
 	data["direction"] = fmt.Sprintf("%.2f", direction)
@@ -95,7 +95,7 @@ func (p *RemoteIDParser) decodeASTMSystem(payload []byte, data map[string]string
 	}
 
 	opLocType := (payload[0] >> 2) & 0x03
-	classification := payload[0] & 0x03
+	classification := payload[16]
 
 	data["flags"] = fmt.Sprintf("0x%02X", payload[0])
 	data["operator_loc_type"] = lookupName(astmOpLocTypeNames, int(opLocType))
@@ -117,7 +117,7 @@ func (p *RemoteIDParser) decodeASTMSystem(payload []byte, data map[string]string
 	if alt, ok := parseAltitudeLE(payload, 14); ok {
 		data["area_floor"] = fmt.Sprintf("%.2f", alt)
 	}
-	if alt, ok := parseAltitudeLE(payload, 16); ok {
+	if alt, ok := parseAltitudeLE(payload, 17); ok {
 		data["operator_alt"] = fmt.Sprintf("%.2f", alt)
 	}
 }

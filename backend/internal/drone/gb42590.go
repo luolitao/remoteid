@@ -48,12 +48,13 @@ func (p *RemoteIDParser) decodeGBLocation(payload []byte, data map[string]string
 		data["direction"] = fmt.Sprintf("%.2f", float64(directionRaw)*360.0/4096.0)
 	}
 
-	if payload[2] != 255 {
-		data["speed_h"] = fmt.Sprintf("%.2f", float64(payload[2])*0.25)
+	speedMult := payload[0] & 0x01
+	speedFactor := 0.25
+	if speedMult == 1 {
+		speedFactor = 0.75
 	}
-	if payload[3] != 255 {
-		data["speed_v"] = fmt.Sprintf("%.2f", float64(int16(payload[3])-128)*0.5)
-	}
+	data["speed_h"] = fmt.Sprintf("%.2f", float64(payload[2])*speedFactor)
+	data["speed_v"] = fmt.Sprintf("%.2f", float64(int8(payload[3]))*0.5)
 
 	if lat, ok := parseCoordLE(payload, 4, 90.0); ok {
 		data["latitude"] = fmt.Sprintf("%.7f", lat)
@@ -86,7 +87,7 @@ func (p *RemoteIDParser) decodeGBSystem(payload []byte, data map[string]string) 
 
 	// [修复 Bug] GB 42590 中 Classification 占低 3 位，Operator Location Type 占接下来的 2 位
 	opLocType := (payload[0] >> 3) & 0x03
-	classification := payload[0] & 0x07
+	classification := payload[16]
 
 	data["flags"] = fmt.Sprintf("0x%02X", payload[0])
 	data["operator_loc_type"] = lookupName(gbOpLocTypeNames, int(opLocType))
@@ -108,7 +109,7 @@ func (p *RemoteIDParser) decodeGBSystem(payload []byte, data map[string]string) 
 	if alt, ok := parseAltitudeLE(payload, 14); ok {
 		data["area_floor"] = fmt.Sprintf("%.2f", alt)
 	}
-	if alt, ok := parseAltitudeLE(payload, 16); ok {
+	if alt, ok := parseAltitudeLE(payload, 17); ok {
 		data["operator_alt"] = fmt.Sprintf("%.2f", alt)
 	}
 }
