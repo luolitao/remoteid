@@ -94,6 +94,7 @@ type DroneMessage struct {
 	Standard    string            `json:"standard"`
 	Data        map[string]string `json:"data"` // 修正类型
 	Source      string            `json:"source"`
+	RawHex      string            `json:"raw_hex,omitempty"` // ✅ 新增：用于打印原始数据包 16 进制
 }
 
 // 3. +++ 添加数据库相关类型 +++
@@ -129,4 +130,27 @@ type WSMessage struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
 	MAC  string      `json:"mac,omitempty"`
+}
+
+// pkg/types/types.go (在文件末尾追加)
+
+// CaptureStats 抓包层实时统计
+type CaptureStats struct {
+	TotalPackets   int       `json:"total_packets"`
+	BeaconFrames   int       `json:"beacon_frames"`
+	ActionFrames   int       `json:"action_frames"`
+	DronesDetected int       `json:"drones_detected"`
+	NormalDevices  int       `json:"normal_devices"`
+	ParseErrors    int       `json:"parse_errors"`
+	LastPacketTime time.Time `json:"last_packet_time"`
+	// 16进制显示：仅保留前 128 个字符 (64字节)，避免 API 响应过大
+	LastParsedHex  string `json:"last_parsed_hex,omitempty"`
+	LastDroppedHex string `json:"last_dropped_hex,omitempty"`
+}
+
+// ProcessorStats 解析与处理层统计
+type ProcessorStats struct {
+	TotalDrones   int       `json:"total_drones"`
+	TotalMessages int       `json:"total_messages"`
+	LastUpdate    time.Time `json:"last_update"`
 }

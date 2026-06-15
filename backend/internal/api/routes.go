@@ -1,4 +1,3 @@
-// internal/api/routes.go
 package api
 
 import (
@@ -6,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"remoteid-monitor/internal/drone"
 	"remoteid-monitor/pkg/ws"
 
 	"github.com/gin-gonic/gin"
@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Server) registerRoutes() {
-	// 健康检查（含 sniffer 状态）
+	// 1. 健康检查（含抓包状态）
 	s.engine.GET("/health", func(c *gin.Context) {
 		health := gin.H{
 			"status":    "healthy",
@@ -21,23 +21,26 @@ func (s *Server) registerRoutes() {
 			"version":   "1.0.0",
 		}
 
-		// 添加抓包状态信息
-		if s.sniffer != nil {
-			lastPacket := s.sniffer.GetLastPacketTime()
-			health["sniffer"] = gin.H{
-				"active":          !lastPacket.IsZero(),
-				"last_packet":     lastPacket.Format(time.RFC3339),
-				"seconds_since":   time.Since(lastPacket).Seconds(),
-				"stale":           !lastPacket.IsZero() && time.Since(lastPacket) > 60*time.Second,
+		// 使用 statusProv 接口获取状态，兼容 Sniffer 或未来的 Manager/BLE
+		if s.statusProv != nil {
+			lastPacket := s.statusProv.GetLastPacketTime()
+			health["sniffer"] = gin.H{ // Key 保持 "sniffer" 以兼容前端
+				"active":        !lastPacket.IsZero(),
+				"last_packet":   lastPacket.Format(time.RFC3339),
+				"seconds_since": time.Since(lastPacket).Seconds(),
+				"stale":         !lastPacket.IsZero() && time.Since(lastPacket) > 60*time.Second,
 			}
 		}
 
 		c.JSON(http.StatusOK, health)
 	})
 
-	// API 路由组
+	// 2. API 路由组
 	api := s.engine.Group("/api")
 	{
+		// 实时统计路由
+		api.GET("/stats", s.getRealtimeStats)
+
 		// 无人机路由
 		drones := api.Group("/drones")
 		{
@@ -69,51 +72,34 @@ func (s *Server) registerRoutes() {
 		}
 	}
 
-	// WebSocket 路由
+	// 3. WebSocket 路由
 	s.engine.GET("/ws", s.websocketHandler)
-
 	slog.Info("所有 API 路由已注册")
 }
 
-// WebSocket 处理器
-func (s *Server) websocketHandler(c *gin.Context) {
-	origin := c.GetHeader("Origin")
+// getRealtimeStats 返回实时的抓包与解析统计数据
+func (s *Server) getRealtimeStats(c *gin.Context) {
+	stats := gin.H{}
 
-	// 检查是否为允许的来源
-	allowedOrigins := []string{
-		"http://localhost:8080",
-		"http://127.0.0.1:8080",
-		"http://192.168.6.30:8080",
-		"http://192.168.6.30",
-		"http://rpi5.lan",
-		"http://rpi5.local",
-	}
-
-	isAllowed := false
-	for _, allowed := range allowedOrigins {
-		if origin == allowed {
-			isAllowed = true
-			break
+	// 尝试将 statusProv 断言为 drone.Manager 以获取详细统计
+	if manager, ok := s.statusProv.(*drone.Manager); ok {
+		stats["capture"] = manager.GetCaptureStats()
+		stats["processor"] = manager.GetProcessor().GetProcessorStats()
+	} else {
+		// 降级处理
+		stats["capture"] = gin.H{"status": "unavailable"}
+		if s.processor != nil {
+			stats["processor"] = s.processor.GetProcessorStats()
 		}
 	}
 
-	if isAllowed {
-		c.Header("Access-Control-Allow-Origin", origin)
-	} else {
-		c.Header("Access-Control-Allow-Origin", "*")
-	}
+	c.JSON(http.StatusOK, stats)
+}
 
-	c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "*")
-	c.Header("Access-Control-Allow-Credentials", "true")
-
-	if c.Request.Method == "OPTIONS" {
-		c.Status(http.StatusOK)
-		return
-	}
-
-	// 正常的 WebSocket 连接处理
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+// websocketHandler 处理 WebSocket 连接
+func (s *Server) websocketHandler(c *gin.Context) {
+	// 直接使用 s.upgrader (指针类型) 调用 Upgrade 方法，Gin 的 CORS 中间件已处理预检请求
+	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		slog.Error("WebSocket 升级失败", "error", err)
 		return

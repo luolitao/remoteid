@@ -1,4 +1,3 @@
-// internal/config/config.go
 package config
 
 import (
@@ -14,56 +13,67 @@ import (
 
 var cfg *Config
 
+// defaultCORSOrigins 当配置文件未指定 CORS 允许的来源时，使用的安全默认列表
+var defaultCORSOrigins = []string{
+	"http://localhost:8080",
+	"http://127.0.0.1:8080",
+	"http://localhost:3000",
+	"http://127.0.0.1:3000",
+	"http://192.168.6.30:8080",
+	"http://192.168.6.30",
+}
+
 // Config 应用配置结构体
 type Config struct {
-	Database struct {
-		Path           string `json:"path"            yaml:"path"`
-		MaxConnections int    `json:"max_connections" yaml:"max_connections"`
-		CacheSize      int    `json:"cache_size"      yaml:"cache_size"`
-	} `json:"database" yaml:"database"`
+	Database DatabaseConfig `json:"database" yaml:"database"`
+	Network  NetworkConfig  `json:"network" yaml:"network"`
+	API      APIConfig      `json:"api" yaml:"api"`
+	Logging  LoggingConfig  `json:"logging" yaml:"logging"`
+	Debug    bool           `json:"debug" yaml:"debug"`
+}
 
-	Network struct {
-		Interface   string `json:"interface"    yaml:"interface"`
-		Channel     int    `json:"channel"      yaml:"channel"`
-		MonitorMode bool   `json:"monitor_mode" yaml:"monitor_mode"`
-	} `json:"network" yaml:"network"`
+type DatabaseConfig struct {
+	Path           string `json:"path" yaml:"path"`
+	MaxConnections int    `json:"max_connections" yaml:"max_connections"`
+	CacheSize      int    `json:"cache_size" yaml:"cache_size"`
+}
 
-	API struct {
-		Port string   `json:"port" yaml:"port"`
-		CORS []string `json:"cors" yaml:"cors"`
-	} `json:"api" yaml:"api"`
+type NetworkConfig struct {
+	Interface   string `json:"interface" yaml:"interface"`
+	Channel     int    `json:"channel" yaml:"channel"`
+	MonitorMode bool   `json:"monitor_mode" yaml:"monitor_mode"`
+}
 
-	Logging struct {
-		Level string `json:"level" yaml:"level"`
-		File  string `json:"file"  yaml:"file"`
-	} `json:"logging" yaml:"logging"`
+type APIConfig struct {
+	Host             string   `json:"host" yaml:"host"`                             // 监听地址，默认 "0.0.0.0"
+	Port             string   `json:"port" yaml:"port"`                             // 监听端口
+	CORSAllowOrigins []string `json:"cors_allow_origins" yaml:"cors_allow_origins"` // CORS 和 WebSocket 允许的 Origin 列表
+}
 
-	Debug bool `json:"debug" yaml:"debug"`
+type LoggingConfig struct {
+	Level string `json:"level" yaml:"level"`
+	File  string `json:"file" yaml:"file"`
 }
 
 // Load 从配置文件加载配置
 func Load(configFile string) error {
-	// 1. 检查文件是否存在
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		slog.Warn("配置文件不存在，使用默认配置", "file", configFile)
 		cfg = getDefaultConfig()
 		return nil
 	}
 
-	// 2. 读取配置文件
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
-	// 3. 检查文件是否为空
 	if len(data) == 0 {
 		slog.Warn("配置文件为空，使用默认配置", "file", configFile)
 		cfg = getDefaultConfig()
 		return nil
 	}
 
-	// 4. 确定配置文件类型
 	ext := filepath.Ext(configFile)
 	switch strings.ToLower(ext) {
 	case ".json":
@@ -77,66 +87,51 @@ func Load(configFile string) error {
 	}
 }
 
-// +++ 新增：loadJSON 函数实现 +++
 func loadJSON(data []byte) error {
 	cfg = &Config{}
-
-	// 解析 JSON
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return fmt.Errorf("解析 JSON 配置失败: %w", err)
 	}
-
-	// 验证和设置默认值
 	validateConfig()
-
 	slog.Info("JSON 配置加载成功")
 	return nil
 }
 
-// +++ 新增：loadYAML 函数实现 +++
 func loadYAML(data []byte) error {
 	cfg = &Config{}
-
-	// 解析 YAML
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return fmt.Errorf("解析 YAML 配置失败: %w", err)
 	}
-
-	// 验证和设置默认值
 	validateConfig()
-
 	slog.Info("YAML 配置加载成功")
 	return nil
 }
 
-// validateConfig 验证配置有效性
+// validateConfig 验证配置有效性并填充默认值
 func validateConfig() {
 	if cfg == nil {
 		cfg = getDefaultConfig()
 		return
 	}
 
-	// 1. 验证数据库路径
 	if cfg.Database.Path == "" {
 		cfg.Database.Path = "/tmp/remoteid-monitor.db"
 	}
-
-	// 2. 验证网络接口
 	if cfg.Network.Interface == "" {
 		cfg.Network.Interface = "wlan1"
 	}
-
-	// 3. 验证 API 端口
+	if cfg.API.Host == "" {
+		cfg.API.Host = "0.0.0.0" // 默认监听所有网络接口
+	}
 	if cfg.API.Port == "" {
-		cfg.API.Port = "8000"
+		cfg.API.Port = "8080"
 	}
 
-	// 4. 验证 CORS
-	if len(cfg.API.CORS) == 0 {
-		cfg.API.CORS = []string{"*"}
+	// ✅ 核心优化：如果未配置 CORS，使用安全的默认白名单，而不是 "*"
+	if len(cfg.API.CORSAllowOrigins) == 0 {
+		cfg.API.CORSAllowOrigins = defaultCORSOrigins
 	}
 
-	// 5. 验证日志级别
 	switch strings.ToLower(cfg.Logging.Level) {
 	case "debug", "info", "warn", "error", "fatal":
 		// 有效级别
@@ -144,7 +139,6 @@ func validateConfig() {
 		cfg.Logging.Level = "info"
 	}
 
-	// 6. 树莓派优化
 	if cfg.Database.MaxConnections == 0 {
 		cfg.Database.MaxConnections = 5
 	}
@@ -156,58 +150,37 @@ func validateConfig() {
 // getDefaultConfig 获取默认配置
 func getDefaultConfig() *Config {
 	defaultCfg := &Config{
-		Database: struct {
-			Path           string `json:"path"            yaml:"path"`
-			MaxConnections int    `json:"max_connections" yaml:"max_connections"`
-			CacheSize      int    `json:"cache_size"      yaml:"cache_size"`
-		}{
+		Database: DatabaseConfig{
 			Path:           "/tmp/remoteid-monitor.db",
 			MaxConnections: 5,
 			CacheSize:      512,
 		},
-		Network: struct {
-			Interface   string `json:"interface"    yaml:"interface"`
-			Channel     int    `json:"channel"      yaml:"channel"`
-			MonitorMode bool   `json:"monitor_mode" yaml:"monitor_mode"`
-		}{
+		Network: NetworkConfig{
 			Interface:   "wlan1",
-			Channel:     157,
+			Channel:     6, // 2.4GHz 默认社会信道
 			MonitorMode: true,
 		},
-		API: struct {
-			Port string   `json:"port" yaml:"port"`
-			CORS []string `json:"cors" yaml:"cors"`
-		}{
-			Port: "8000",
-			CORS: []string{"*"},
+		API: APIConfig{
+			Host:             "0.0.0.0",
+			Port:             "8080",
+			CORSAllowOrigins: defaultCORSOrigins, // ✅ 默认注入安全列表
 		},
-		Logging: struct {
-			Level string `json:"level" yaml:"level"`
-			File  string `json:"file"  yaml:"file"`
-		}{
+		Logging: LoggingConfig{
 			Level: "info",
 			File:  "/tmp/remoteid-monitor.log",
 		},
-		Debug: true,
+		Debug: false,
 	}
 
-	// 创建数据目录
 	dataDir := filepath.Dir(defaultCfg.Database.Path)
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
 		os.MkdirAll(dataDir, 0755)
 	}
 
-	// 检查目录权限
-	if info, err := os.Stat(dataDir); err == nil {
-		if info.Mode().Perm()&0200 == 0 {
-			os.Chmod(dataDir, 0755)
-		}
-	}
-
 	return defaultCfg
 }
 
-// Get 获取配置
+// Get 获取全局配置实例
 func Get() *Config {
 	if cfg == nil {
 		cfg = getDefaultConfig()

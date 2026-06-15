@@ -1,8 +1,8 @@
-// internal/api/alerts.go
 package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"remoteid-monitor/pkg/types"
@@ -11,9 +11,13 @@ import (
 )
 
 func (s *Server) listAlerts(c *gin.Context) {
-	limit := c.DefaultQuery("limit", "10")
+	limitStr := c.DefaultQuery("limit", "50")
+	limit := 50
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
 
-	alerts := s.processor.GetAlerts(limit)
+	alerts := s.processor.GetAlerts(strconv.Itoa(limit))
 	if alerts == nil {
 		alerts = []*types.Alert{}
 	}
@@ -39,13 +43,11 @@ func (s *Server) createAlert(c *gin.Context) {
 	alert.Resolved = false
 
 	createdAlert := s.processor.CreateAlert(&alert)
-
 	c.JSON(http.StatusCreated, createdAlert)
 }
 
 func (s *Server) getAlertDetails(c *gin.Context) {
 	id := c.Param("id")
-
 	alert := s.processor.GetAlertByID(id)
 	if alert == nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -55,18 +57,16 @@ func (s *Server) getAlertDetails(c *gin.Context) {
 		})
 		return
 	}
-
 	c.JSON(http.StatusOK, alert)
 }
 
 func (s *Server) resolveAlert(c *gin.Context) {
 	id := c.Param("id")
-
 	result := s.processor.ResolveAlert(id)
 	if !result {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error":   "alert_not_found",
-			"message": "指定的警报未找到",
+			"message": "指定的警报未找到或已解决",
 			"id":      id,
 		})
 		return
@@ -81,13 +81,11 @@ func (s *Server) resolveAlert(c *gin.Context) {
 
 func (s *Server) getAlertStatistics(c *gin.Context) {
 	stats := s.processor.GetAlertStatistics()
-
 	c.JSON(http.StatusOK, stats)
 }
 
 func (s *Server) clearAlerts(c *gin.Context) {
 	count := s.processor.ClearAllAlerts()
-
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "所有警报已清除",
@@ -97,6 +95,10 @@ func (s *Server) clearAlerts(c *gin.Context) {
 
 func (s *Server) searchAlerts(c *gin.Context) {
 	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter 'q' is required"})
+		return
+	}
 
 	results := s.processor.SearchAlerts(query)
 	if results == nil {

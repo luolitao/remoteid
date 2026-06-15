@@ -1,4 +1,3 @@
-// internal/api/system.go
 package api
 
 import (
@@ -10,12 +9,13 @@ import (
 )
 
 func (s *Server) getSystemInfo(c *gin.Context) {
-	// 计算运行时间
 	uptime := time.Since(s.startTime).String()
 
-	// 获取运行时内存统计
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+
+	// 获取 Processor 层的统计信息
+	procStats := s.processor.GetProcessorStats()
 
 	info := gin.H{
 		"version":       "1.0.0",
@@ -41,14 +41,11 @@ func (s *Server) getSystemInfo(c *gin.Context) {
 		"database": gin.H{
 			"path": s.config.Database.Path,
 		},
+		// +++ 新增：解析层实时统计 +++
+		"processor_stats": procStats,
 	}
 
 	c.JSON(http.StatusOK, info)
-}
-
-// formatMB 将字节转换为 MB，保留 2 位小数
-func formatMB(bytes uint64) float64 {
-	return float64(bytes) / 1024 / 1024
 }
 
 func (s *Server) getConfig(c *gin.Context) {
@@ -65,7 +62,7 @@ func (s *Server) getConfig(c *gin.Context) {
 		},
 		"api": gin.H{
 			"port": s.config.API.Port,
-			"cors": s.config.API.CORS,
+			"cors": s.config.API.CORSAllowOrigins,
 		},
 		"logging": gin.H{
 			"level": s.config.Logging.Level,
@@ -73,6 +70,10 @@ func (s *Server) getConfig(c *gin.Context) {
 		},
 		"debug": s.config.Debug,
 	}
-
 	c.JSON(http.StatusOK, config)
+}
+
+// formatMB 将字节转换为 MB，保留 2 位小数
+func formatMB(bytes uint64) float64 {
+	return float64(bytes) / 1024 / 1024
 }
