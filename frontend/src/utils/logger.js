@@ -2,6 +2,8 @@
  * 统一日志工具
  * 生产环境通过环境变量控制日志级别，避免泄露调试信息
  */
+/* eslint-disable no-console */
+// 下面是原有的代码...
 
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3, silent: 4 }
 
@@ -23,7 +25,7 @@ const logger = {
   },
   error(...args) {
     if (currentLevel <= LOG_LEVELS.error) console.error('[ERROR]', ...args)
-  }
+  },
 }
 
 export default logger

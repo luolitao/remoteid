@@ -1,158 +1,122 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 /* =========================================================================
-   Remote ID Monitor — tar1090-style CSS
+   全局 CSS 变量与基础重置 (tar1090 风格)
    ========================================================================= */
 
-/* ---- CSS Variables (mirroring tar1090's :root) ---- */
 :root {
-  --SCALE: 1;
-  --BGCOLOR1: #F8F8F8;
-  --BGCOLOR2: #CCCCCC;
-  --ACCENT: #00596b;
-  --FS1: calc(10px * var(--SCALE));
-  --FS2: calc(13px * var(--SCALE));
-  --FS3: calc(17px * var(--SCALE));
-  --TXTCOLOR1: #003f4b;
-  --TXTCOLOR2: #050505;
-  --TXTCOLOR3: #101010;
+  /* 颜色变量 */
+  --BGCOLOR1: #ffffff;
+  --BGCOLOR2: #e2e8f0;
+  --ACCENT: #3182ce; /* 蓝色主色调 */
+  --TXTCOLOR1: #1a202c;
+  --TXTCOLOR2: #718096;
+
+  /* 字体大小变量 */
+  --FS1: 11px;
+  --FS2: 12px;
+  --FS3: 13px;
 }
 
-* { box-sizing: border-box; }
+/* 暗黑模式支持 (可选，如果系统偏好暗黑模式则应用) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --BGCOLOR1: #1a202c;
+    --BGCOLOR2: #2d3748;
+    --ACCENT: #4299e1;
+    --TXTCOLOR1: #f7fafc;
+    --TXTCOLOR2: #a0aec0;
+  }
+}
 
-html, body, #app {
+/* 基础重置 */
+* {
   margin: 0;
   padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
   height: 100%;
   width: 100%;
-  background: var(--BGCOLOR1);
-  font-family: "Helvetica Neue", Helvetica, Verdana, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   font-size: var(--FS2);
-  line-height: 1.45;
-  overflow: hidden;
-  color: var(--TXTCOLOR2);
+  color: var(--TXTCOLOR1);
+  background-color: var(--BGCOLOR1);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ---- Scrollbar (thin, matching tar1090) ---- */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--BGCOLOR1); }
-::-webkit-scrollbar-thumb { background: var(--BGCOLOR2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #999; }
-
-/* ---- Leaflet overrides ---- */
-.leaflet-container {
-  background: var(--BGCOLOR1) !important;
-}
-.leaflet-control-zoom a {
-  background: var(--BGCOLOR1) !important;
-  color: var(--TXTCOLOR2) !important;
-  border-color: var(--BGCOLOR2) !important;
-}
-.leaflet-control-attribution {
-  background: rgba(248, 248, 248, 0.85) !important;
-  font-size: 9px !important;
-}
-.leaflet-popup-content-wrapper {
-  background: #fff !important;
-  border-radius: 3px !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,.15) !important;
-  font-size: var(--FS2) !important;
-}
-.leaflet-popup-tip { background: #fff !important; }
-.leaflet-popup-content { margin: 8px 10px !important; font-size: var(--FS2) !important; }
-
-/* ---- Base elements ---- */
-h1, h2, h3, h4 { margin: 0; color: var(--TXTCOLOR1); }
-button { font-family: inherit; font-size: var(--FS2); cursor: pointer; }
-select, input { font-size: var(--FS2); }
-table { border-collapse: collapse; }
-
-/* ---- tar1090-style utility classes ---- */
-.identLarge {
-  font-size: calc(22px * var(--SCALE));
-  line-height: 1.1;
-  color: var(--TXTCOLOR1);
-  font-weight: lighter;
-}
-.identMedium {
-  font-size: calc(17px * var(--SCALE));
-  line-height: 1.3;
-  color: var(--TXTCOLOR1);
-  font-weight: lighter;
-}
-.identSmall {
-  font-size: calc(14px * var(--SCALE));
-  font-weight: bold;
-  color: var(--TXTCOLOR1);
-}
-
-.infoHeading {
-  display: inline-block;
-  margin: 2px 0;
-}
-.infoData {
-  float: right;
-  text-align: right;
-  display: inline-block;
-  margin: 2px 0;
-}
-.infoBlockSection {
-  padding: 7px;
-}
-.rSpacer {
-  padding-top: 3px;
-  padding-bottom: 3px;
-}
-
-/* ---- Sidebar button (tar1090 style) ---- */
-.sidebarButton {
-  background-color: #409EDF;
-  padding: 4px;
-  color: #FFFFFF;
-  font-weight: normal;
-  font-size: var(--FS2);
-  border: none;
-  border-radius: 2px;
-}
-.sidebarButton:hover { background-color: #3c6ea3; }
-
-/* ---- Form controls ---- */
-.formButton {
-  font-size: var(--FS2);
-  color: var(--TXTCOLOR2);
-  background-color: var(--BGCOLOR2);
-  border: 1px solid var(--BGCOLOR1);
-}
-.formButton:disabled { color: var(--TXTCOLOR3); }
-
-/* ---- Pulse dot ---- */
-.status-dot {
-  display: inline-block;
+/* 滚动条美化 (WebKit) */
+::-webkit-scrollbar {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: #bbb;
-  margin-right: 6px;
-  vertical-align: middle;
 }
-.status-dot.live {
-  background: #19d27a;
-  animation: dotPulse 1.6s ease-in-out infinite;
+::-webkit-scrollbar-track {
+  background: var(--BGCOLOR1);
 }
-.status-dot.warn {
-  background: #ff9633;
+::-webkit-scrollbar-thumb {
+  background: var(--BGCOLOR2);
+  border-radius: 4px;
 }
-.status-dot.error {
-  background: #ff4d6d;
+::-webkit-scrollbar-thumb:hover {
+  background: var(--TXTCOLOR2);
 }
 
-@keyframes dotPulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: .4; }
+/* 通用工具类 */
+.text-right {
+  text-align: right;
 }
-
-/* ---- Hidden ---- */
-.hidden { display: none !important; }
+.text-center {
+  text-align: center;
+}
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.font-bold {
+  font-weight: bold;
+}
+.opacity-50 {
+  opacity: 0.5;
+}
+.flex {
+  display: flex;
+}
+.items-center {
+  align-items: center;
+}
+.justify-between {
+  justify-content: space-between;
+}
+.gap-1 {
+  gap: 4px;
+}
+.gap-2 {
+  gap: 8px;
+}
+.w-full {
+  width: 100%;
+}
+.mb-1 {
+  margin-bottom: 4px;
+}
+.ml-2 {
+  margin-left: 8px;
+}
+.mr-1 {
+  margin-right: 4px;
+}
+.px-2 {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.py-1 {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.text-xs {
+  font-size: var(--FS1);
+}
+.text-white {
+  color: #ffffff;
+}

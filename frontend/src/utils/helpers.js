@@ -30,7 +30,7 @@ export const isRecent = (timestamp, minutes = 5) => {
   if (!timestamp) return false
   const now = new Date()
   const then = new Date(timestamp)
-  return (now - then) < minutes * 60000
+  return now - then < minutes * 60000
 }
 
 /**

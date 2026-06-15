@@ -11,8 +11,8 @@ export default defineConfig({
       '@assets': path.resolve(__dirname, './src/assets'),
       '@stores': path.resolve(__dirname, './src/stores'),
       '@views': path.resolve(__dirname, './src/views'),
-      '@utils': path.resolve(__dirname, './src/utils')
-    }
+      '@utils': path.resolve(__dirname, './src/utils'),
+    },
   },
   server: {
     port: 8080,
@@ -23,28 +23,28 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
         secure: false,
-        timeout: 30000
+        timeout: 30000,
       },
       '/ws': {
         target: 'ws://rpi5.lan:8000',
         changeOrigin: true,
         ws: true,
-        secure: false
+        secure: false,
       },
       // 高德地图瓦片代理，绕过浏览器的 HTTPS 连接限制
       '/amap-vec': {
         target: 'https://wprd01.is.autonavi.com',
         changeOrigin: true,
         secure: false,
-        rewrite: (path) => path.replace(/^\/amap-vec/, '/appmaptile')
+        rewrite: (path) => path.replace(/^\/amap-vec/, '/appmaptile'),
       },
       '/amap-img': {
         target: 'https://webst01.is.autonavi.com',
         changeOrigin: true,
         secure: false,
-        rewrite: (path) => path.replace(/^\/amap-img/, '/appmaptile')
-      }
-    }
+        rewrite: (path) => path.replace(/^\/amap-img/, '/appmaptile'),
+      },
+    },
   },
   build: {
     target: 'es2015',
@@ -58,11 +58,11 @@ export default defineConfig({
       compress: {
         drop_debugger: true,
         // 保留 console.error 和 console.warn 用于生产环境排错
-        pure_funcs: ['console.log', 'console.debug']
+        pure_funcs: ['console.log', 'console.debug'],
       },
       format: {
-        comments: false
-      }
+        comments: false,
+      },
     },
     rollupOptions: {
       output: {
@@ -76,20 +76,14 @@ export default defineConfig({
         },
         entryFileNames: 'assets/[name].[hash].js',
         chunkFileNames: 'assets/[name].[hash].js',
-        assetFileNames: 'assets/[name].[hash].[ext]'
-      }
-    }
+        assetFileNames: 'assets/[name].[hash].[ext]',
+      },
+    },
   },
   esbuild: {
-    drop: process.env.NODE_ENV === 'production' ? ['debugger'] : []
+    drop: process.env.NODE_ENV === 'production' ? ['debugger'] : [],
   },
   optimizeDeps: {
-    include: [
-      'vue',
-      'vue-router',
-      'pinia',
-      'axios',
-      'leaflet'
-    ]
-  }
+    include: ['vue', 'vue-router', 'pinia', 'axios', 'leaflet'],
+  },
 })

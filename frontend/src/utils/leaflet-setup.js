@@ -24,12 +24,12 @@ export const setupLeafletIcons = () => {
  */
 export const createDroneIcon = (color = 'green', size = 12) => {
   const palette = {
-    green:  { bg: '#19d27a', border: '#0f9d58' },
-    blue:   { bg: '#56a8ff', border: '#3182ce' },
-    red:    { bg: '#ff4d6d', border: '#cc0000' },
+    green: { bg: '#19d27a', border: '#0f9d58' },
+    blue: { bg: '#56a8ff', border: '#3182ce' },
+    red: { bg: '#ff4d6d', border: '#cc0000' },
     yellow: { bg: '#fbcc4a', border: '#d4a017' },
     orange: { bg: '#ff9633', border: '#cc6600' },
-    gray:   { bg: '#999',    border: '#666' },
+    gray: { bg: '#999', border: '#666' },
   }
   const c = palette[color] || palette.green
 
@@ -52,9 +52,9 @@ export const createDroneIcon = (color = 'green', size = 12) => {
  */
 export const createDirectionIcon = (heading = 0, color = 'blue', size = 14) => {
   const palette = {
-    green:  '#19d27a',
-    blue:   '#56a8ff',
-    red:    '#ff4d6d',
+    green: '#19d27a',
+    blue: '#56a8ff',
+    red: '#ff4d6d',
     yellow: '#fbcc4a',
   }
   const fill = palette[color] || palette.blue
@@ -62,8 +62,8 @@ export const createDirectionIcon = (heading = 0, color = 'blue', size = 14) => {
   return L.divIcon({
     html: `<div style="
       width: 0; height: 0;
-      border-left: ${size/2}px solid transparent;
-      border-right: ${size/2}px solid transparent;
+      border-left: ${size / 2}px solid transparent;
+      border-right: ${size / 2}px solid transparent;
       border-bottom: ${size}px solid ${fill};
       transform: rotate(${heading}deg);
       filter: drop-shadow(0 1px 2px rgba(0,0,0,.3));
