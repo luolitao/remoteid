@@ -66,8 +66,6 @@ func (p *Processor) ProcessDroneData(mac string, messages []types.DroneMessage) 
 
 	// ✅ 2. 增加该 MAC 的计数，并判断是否为日志打印时机
 	p.macMsgCounts[mac]++
-	msgCount := p.macMsgCounts[mac]
-	isLogTime := (msgCount == 1) || (msgCount%100 == 0) // 仅在第 1 次，或每 100 次打印
 
 	// 提取 raw_hex (从第一条消息中获取，供日志使用)
 	rawHex := ""
@@ -89,23 +87,6 @@ func (p *Processor) ProcessDroneData(mac string, messages []types.DroneMessage) 
 				"uas_id", strings.TrimSpace(msg.Data["uas_id"]),
 				"raw_hex", rawHex)
 			drone.Standard = msgStandard
-		}
-
-		// 📶 传输方式识别 (首次或定期打印)
-		if transport, ok := msg.Data["transport"]; ok && transport != "" {
-			transportUpper := strings.ToUpper(strings.TrimSpace(transport))
-			if drone.Source == "" {
-				drone.Source = transportUpper
-			}
-
-			// ✅ 核心：仅在 isLogTime 时打印，彻底解决刷屏问题
-			if isLogTime {
-				slog.Info("📶 识别到传输方式",
-					"mac", mac,
-					"transport", transportUpper,
-					"msg_count", msgCount, // 附带当前计数，方便观察数据流稳定性
-					"raw_hex", rawHex) // 附带 16 进制 Payload
-			}
 		}
 
 		// 执行字段更新
