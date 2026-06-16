@@ -1,6 +1,7 @@
 package drone
 
 import (
+	"fmt"
 	"log/slog"
 	"remoteid-monitor/internal/db"
 	"remoteid-monitor/pkg/types"
@@ -84,8 +85,13 @@ func (p *Processor) ProcessDroneData(mac string, messages []types.DroneMessage) 
 				"mac", mac,
 				"protocol", msgStandard,
 				"msg_type", msgType,
-				"uas_id", strings.TrimSpace(msg.Data["uas_id"]),
 				"raw_hex", rawHex)
+			if msgType == "gb46750" {
+				slog.Info("📡 成功解析 GB46750 协议", "messages", messages)
+			} else {
+				slog.Info("📡 成功解析 ASTM 协议",
+					"msg", msg.Data)
+			}
 			drone.Standard = msgStandard
 		}
 
@@ -351,7 +357,11 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 	// 清洗 Data map 的所有 key 和 value
 	cleanData := make(map[string]string, len(msg.Data))
 	for k, v := range msg.Data {
-		cleanData[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		// 修复：使用 fmt.Sprintf 将 any 类型强制转为字符串，然后再去除空格
+		strVal := fmt.Sprintf("%v", v)
+		trimmedVal := strings.TrimSpace(strVal)
+		// TODO: 使用 trimmedVal
+		cleanData[strings.TrimSpace(k)] = strings.TrimSpace(trimmedVal)
 	}
 
 	// 辅助函数：从清洗后的 map 中安全获取值
@@ -405,7 +415,7 @@ func (p *Processor) updateDroneFromMessage(drone *types.DroneData, msg types.Dro
 		}
 
 		// 高度合理性检查
-		if drone.Altitude > 5000 || drone.Altitude < -500 {
+		if drone.Altitude > 1000 || drone.Altitude < 10 {
 			slog.Warn("高度数据异常", "mac", drone.MAC, "altitude", drone.Altitude, "raw_hex", msg.RawHex)
 			drone.Altitude = 0
 		}

@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-func (p *RemoteIDParser) decodeASTMMessage(msgData []byte, msgType uint8) (string, map[string]string) {
+func (p *RemoteIDParser) decodeASTMMessage(msgData []byte, msgType uint8) (string, map[string]any) {
 	payload := msgData[1:]
-	data := make(map[string]string)
+	data := make(map[string]any)
 	var messageType string
 
 	switch msgType {
@@ -34,7 +34,7 @@ func (p *RemoteIDParser) decodeASTMMessage(msgData []byte, msgType uint8) (strin
 	return messageType, data
 }
 
-func (p *RemoteIDParser) decodeASTMLocation(payload []byte, data map[string]string) {
+func (p *RemoteIDParser) decodeASTMLocation(payload []byte, data map[string]any) {
 	if len(payload) < 22 {
 		return
 	}
@@ -89,7 +89,7 @@ func (p *RemoteIDParser) decodeASTMLocation(payload []byte, data map[string]stri
 	data["timestamp"] = fmt.Sprintf("%.1f", float64(binary.LittleEndian.Uint16(payload[20:22]))*0.1)
 }
 
-func (p *RemoteIDParser) decodeASTMSystem(payload []byte, data map[string]string) {
+func (p *RemoteIDParser) decodeASTMSystem(payload []byte, data map[string]any) {
 	if len(payload) < 18 {
 		return
 	}

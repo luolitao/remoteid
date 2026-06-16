@@ -21,11 +21,13 @@ func cleanString(b []byte, defaultVal string) string {
 }
 
 // lookupName 通用查表函数，替代冗长的 switch-case
+
+// 安全的查表函数，防止 index out of range panic
 func lookupName(names []string, idx int) string {
 	if idx >= 0 && idx < len(names) {
 		return names[idx]
 	}
-	return fmt.Sprintf("Unknown(%d)", idx)
+	return fmt.Sprintf("未知(%d)", idx)
 }
 
 // parseCoordLE 解析小端序经纬度，返回 (值, 是否有效)

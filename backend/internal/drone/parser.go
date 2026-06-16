@@ -127,8 +127,8 @@ func (p *RemoteIDParser) parseVendorIE(ieList []byte) ([]types.DroneMessage, err
 
 		// 3. 只处理 Vendor Specific IE (0xDD)
 		if elementID == 0xDD {
-			// 至少需要 OUI(3) + Type(1) = 4 字节
-			if length >= 4 {
+			// 至少需要 OUI(3) + Type(1) message counter(1)= 5 字节
+			if length >= 5 {
 				ieData := ieList[offset+2 : offset+2+length]
 
 				// 检查 ASD-STAN OUI (FA:0B:BC) + Type (0x0D)
@@ -141,14 +141,18 @@ func (p *RemoteIDParser) parseVendorIE(ieList []byte) ([]types.DroneMessage, err
 					}
 
 					// 解析 Remote ID 消息 (跳过 OUI+Type)
-					dataStart := 4
+					dataStart := 5
 
 					if p.isGB46750Format(ieData, dataStart) {
 						msgs := p.parseGB46750Payload(ieData[dataStart:])
+
 						for i := range msgs {
 							msgs[i].RawHex = payloadHex
 						}
 						messages = append(messages, msgs...)
+
+						//slog.Info("解析 GB46750 协议", "messages", messages)
+
 					} else {
 						msgStart := p.findASTMMessageHeader(ieData, dataStart)
 						if msgStart >= 0 {
@@ -171,13 +175,31 @@ func (p *RemoteIDParser) parseVendorIE(ieList []byte) ([]types.DroneMessage, err
 }
 
 func (p *RemoteIDParser) isGB46750Format(raw []byte, dataStart int) bool {
-	if dataStart+7 > len(raw) {
+	// 载荷至少需要: DataType(1) + Version(1) + Length(1) + 至少1个Flags字节 = 4字节
+	if dataStart+4 > len(raw) {
 		return false
 	}
-	if raw[dataStart+1] != gb46750Magic {
+
+	payload := raw[dataStart:]
+
+	// 1. 严格匹配 GB46750 魔数：第1字节必须是 0xFF
+	if payload[0] != gb46750Magic {
 		return false
 	}
-	return ((raw[dataStart+2] >> 5) & 0x07) == gb46750MajorVersion
+
+	// 2. 严格匹配主版本号：第2字节的低3位 (Bits 0-2) 必须是 001 (十进制1)
+	//    协议原文: "Bits 0-2: 001"
+	if (payload[1] >> 5) != 0x01 {
+		return false
+	}
+
+	// 3. 合理性校验：第3字节为 Length，协议规定 1~200，防止越界解析
+	length := int(payload[2])
+	if length < 1 || length > 200 {
+		return false
+	}
+
+	return true
 }
 
 // findASTMMessageHeader 在 raw 中从 scanStart 开始扫描，查找 ASTM 或 GB 消息 Header
@@ -185,13 +207,12 @@ func (p *RemoteIDParser) isGB46750Format(raw []byte, dataStart int) bool {
 // 即 byte 满足: msgType <= 5 (或 15) 且 (protoVer == 1 或 2)
 // 最多扫描 8 字节（覆盖 Message Counter + 可能的额外元数据）
 func (p *RemoteIDParser) findASTMMessageHeader(raw []byte, scanStart int) int {
-	start := scanStart + 1 // 跳过 Message Counter
-	maxScan := start + 2   // 最多允许 2 字节的偏移，应对非标准 padding
+	maxScan := scanStart + 2 // 最多允许 2 字节的偏移，应对非标准 padding
 	if maxScan > len(raw) {
 		maxScan = len(raw)
 	}
 
-	for i := start; i < maxScan; i++ {
+	for i := scanStart; i < maxScan; i++ {
 		b := raw[i]
 		msgType := (b >> 4) & 0x0F
 		protoVer := b & 0x0F // 提取低 4 位作为 Protocol Version
@@ -245,7 +266,7 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 				}
 
 				var messageType string
-				var data map[string]string
+				var data map[string]any
 				var standard string
 
 				if effectiveProtoVer == gbProtocolVersion {
@@ -274,7 +295,7 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 
 		// 处理普通的单条消息 (MsgType 0-5)
 		var messageType string
-		var data map[string]string
+		var data map[string]any
 		var standard string
 
 		if protoVer == gbProtocolVersion || protoVer == 0 {

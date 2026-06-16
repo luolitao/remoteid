@@ -4,6 +4,7 @@ import (
 	"time"
 )
 
+// DroneData 前端展示用的无人机聚合数据
 type DroneData struct {
 	MAC               string    `json:"mac"`
 	UASID             string    `json:"uas_id"`
@@ -36,6 +37,34 @@ type DroneData struct {
 	LastSeen          time.Time `json:"last_seen"`
 }
 
+// DroneMessage 解析器输出的单条原始消息
+type DroneMessage struct {
+	MessageType string         `json:"message_type"` // 修正字段名
+	Standard    string         `json:"standard"`
+	Data        map[string]any `json:"data"` // ✅ 优化：改为 any，允许直接存储 float64/int，避免前端二次字符串转换
+	Source      string         `json:"source"`
+	RawHex      string         `json:"raw_hex,omitempty"` // ✅ 新增：用于打印原始数据包 16 进制
+}
+
+// DroneUpdate 用于内部状态更新的轻量级结构
+type DroneUpdate struct {
+	MAC       string    `json:"mac"`
+	Position  Position  `json:"position"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// DroneDetail 数据库存储或详情页使用的完整档案
+type DroneDetail struct {
+	MAC               string    `json:"mac"`
+	UASID             string    `json:"uas_id"`
+	Position          Position  `json:"position"`
+	LastSeen          time.Time `json:"last_seen"`
+	FirstSeen         time.Time `json:"first_seen"`
+	TotalMessages     int       `json:"total_messages"`
+	SignalStrengthAvg float64   `json:"signal_strength_avg"`
+}
+
+// Position 统一的地理位置与运动状态结构体，提高复用性
 type Position struct {
 	Latitude  float64   `json:"latitude"`
 	Longitude float64   `json:"longitude"`
@@ -45,6 +74,7 @@ type Position struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// Trajectory 轨迹数据
 type Trajectory struct {
 	MAC     string      `json:"mac"`
 	Points  []*Position `json:"points"`
@@ -52,6 +82,7 @@ type Trajectory struct {
 	Updated time.Time   `json:"updated"`
 }
 
+// Alert 告警记录
 type Alert struct {
 	ID         string     `json:"id"`
 	Message    string     `json:"message"`
@@ -68,12 +99,14 @@ type Alert struct {
 	MAC       string    `json:"mac"`       // 相关 MAC 地址
 }
 
+// ExportData 导出数据结构
 type ExportData struct {
 	Drone     *DroneData  `json:"drone"`
 	Positions []*Position `json:"positions"`
 	Exported  time.Time   `json:"exported"`
 }
 
+// DroneStatistics 无人机统计
 type DroneStatistics struct {
 	TotalDrones    int       `json:"total_drones"`
 	ActiveDrones   int       `json:"active_drones"`
@@ -81,6 +114,7 @@ type DroneStatistics struct {
 	LastUpdate     time.Time `json:"last_update"`
 }
 
+// AlertStatistics 告警统计
 type AlertStatistics struct {
 	TotalAlerts    int       `json:"total_alerts"`
 	ResolvedAlerts int       `json:"resolved_alerts"`
@@ -88,32 +122,7 @@ type AlertStatistics struct {
 	LastUpdate     time.Time `json:"last_update"`
 }
 
-// 2. +++ 添加缺失的类型 +++
-type DroneMessage struct {
-	MessageType string            `json:"message_type"` // 修正字段名
-	Standard    string            `json:"standard"`
-	Data        map[string]string `json:"data"` // 修正类型
-	Source      string            `json:"source"`
-	RawHex      string            `json:"raw_hex,omitempty"` // ✅ 新增：用于打印原始数据包 16 进制
-}
-
-// 3. +++ 添加数据库相关类型 +++
-type DroneUpdate struct {
-	MAC       string    `json:"mac"`
-	Position  Position  `json:"position"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type DroneDetail struct {
-	MAC               string    `json:"mac"`
-	UASID             string    `json:"uas_id"`
-	Position          Position  `json:"position"`
-	LastSeen          time.Time `json:"last_seen"`
-	FirstSeen         time.Time `json:"first_seen"`
-	TotalMessages     int       `json:"total_messages"`
-	SignalStrengthAvg float64   `json:"signal_strength_avg"`
-}
-
+// SystemInfo 系统运行状态
 type SystemInfo struct {
 	Version      string    `json:"version"`
 	BuildTime    time.Time `json:"build_time"`
@@ -126,13 +135,12 @@ type SystemInfo struct {
 	Timestamp    time.Time `json:"timestamp"`
 }
 
+// WSMessage WebSocket 通信消息
 type WSMessage struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
-	MAC  string      `json:"mac,omitempty"`
+	Type string `json:"type"`
+	Data any    `json:"data"`
+	MAC  string `json:"mac,omitempty"`
 }
-
-// pkg/types/types.go (在文件末尾追加)
 
 // CaptureStats 抓包层实时统计
 type CaptureStats struct {
