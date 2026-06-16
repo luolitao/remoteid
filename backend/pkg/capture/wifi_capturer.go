@@ -3,7 +3,6 @@ package capture
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -22,19 +21,23 @@ const (
 	signalStrengthThreshold = -95
 )
 
+// WiFiCapturer 实现了 Capturer 接口，专门用于捕获 2.4GHz/5GHz WiFi 管理帧
 type WiFiCapturer struct {
-	iface  string
-	handle *pcap.Handle
-	name   string
-	mu     sync.Mutex
-
-	stats types.CaptureStats // 内部统计
+	iface     string
+	handle    *pcap.Handle
+	name      string
+	mu        sync.Mutex // 保护 handle
+	muStats   sync.Mutex // 保护 stats 和 macCounts
+	stats     types.CaptureStats
+	macCounts map[string]int // ✅ 新增：用于控制底层日志打印频率
 }
 
+// NewWiFiCapturer 创建一个新的 WiFi 捕获器实例
 func NewWiFiCapturer(iface string) *WiFiCapturer {
 	return &WiFiCapturer{
-		iface: iface,
-		name:  "WiFi",
+		iface:     iface,
+		name:      "WiFi",
+		macCounts: make(map[string]int), // ✅ 初始化计数器
 	}
 }
 
@@ -62,10 +65,9 @@ func (c *WiFiCapturer) Start(ctx context.Context, out chan<- RawPacket) error {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packetSource.NoCopy = true
-
 	slog.Info("WiFi 捕获器启动成功，开始监听管理帧", "interface", c.iface)
-	go c.captureLoop(ctx, packetSource, out)
 
+	go c.captureLoop(ctx, packetSource, out)
 	return nil
 }
 
@@ -80,10 +82,10 @@ func (c *WiFiCapturer) captureLoop(ctx context.Context, packetSource *gopacket.P
 				continue
 			}
 
-			c.mu.Lock()
+			c.muStats.Lock()
 			c.stats.TotalPackets++
 			c.stats.LastPacketTime = packet.Metadata().Timestamp
-			c.mu.Unlock()
+			c.muStats.Unlock()
 
 			// 1. 提取 RadioTap 层 (信号强度)
 			signalStrength := defaultSignalStrength
@@ -108,21 +110,73 @@ func (c *WiFiCapturer) captureLoop(ctx context.Context, packetSource *gopacket.P
 				continue
 			}
 
-			// 仅捕获 Beacon 和 Action 管理帧
-			if dot11.Type != layers.Dot11TypeMgmtBeacon && dot11.Type != layers.Dot11TypeMgmtAction {
+			// ✅ 修复 QF1003：将 if/else-if 链重构为 tagged switch
+			var frameBody []byte
+			switch dot11.Type {
+			case layers.Dot11TypeMgmtBeacon:
+				c.muStats.Lock()
+				c.stats.BeaconFrames++
+				c.muStats.Unlock()
+				if beaconLayer := packet.Layer(layers.LayerTypeDot11MgmtBeacon); beaconLayer != nil {
+					if beacon, ok := beaconLayer.(*layers.Dot11MgmtBeacon); ok {
+						frameBody = beacon.Payload // 纯净的 IE 列表
+					}
+				}
+			case layers.Dot11TypeMgmtAction:
+				c.muStats.Lock()
+				c.stats.ActionFrames++
+				c.muStats.Unlock()
+				if actionLayer := packet.Layer(layers.LayerTypeDot11MgmtAction); actionLayer != nil {
+					if action, ok := actionLayer.(*layers.Dot11MgmtAction); ok {
+						frameBody = action.Payload // Action Frame 的 Payload
+					}
+				}
+			default:
+				continue // 忽略其他帧类型
+			}
+
+			if len(frameBody) == 0 {
 				continue
 			}
 
-			c.mu.Lock()
-			if dot11.Type == layers.Dot11TypeMgmtBeacon {
-				c.stats.BeaconFrames++
-			} else {
-				c.stats.ActionFrames++
-			}
-			c.mu.Unlock()
+			// ✅ 核心新增：在 Capturer 层快速识别 Remote ID 特征并控制日志输出
+			// 使用 bytes.Contains 快速扫描 ASD-STAN OUI (FA:0B:BC + 0x0D) 或 Legacy OUI
+			isRemoteID := bytes.Contains(frameBody, []byte{0xFA, 0x0B, 0xBC, 0x0D}) ||
+				bytes.Contains(frameBody, []byte{0x06, 0x05, 0x04, 0xFD})
 
-			// 3. 构造统一的 RawPacket (必须 Clone 防止底层 buffer 被复用)
-			payloadCopy := bytes.Clone(packet.Data())
+			if isRemoteID {
+				srcMAC := dot11.Address2.String()
+
+				c.muStats.Lock()
+				c.macCounts[srcMAC]++
+				count := c.macCounts[srcMAC]
+				c.stats.DronesDetected++
+				c.muStats.Unlock()
+
+				// 仅在第 1 次，或每 100 次打印，彻底解决刷屏问题
+				if count == 1 || count%100 == 0 {
+					hexLen := len(frameBody)
+					if hexLen > 128 {
+						hexLen = 128
+					}
+					rawHex := fmt.Sprintf("%X", frameBody[:hexLen])
+					if len(frameBody) > 128 {
+						rawHex += "..."
+					}
+
+					slog.Info("📡 捕获到 Remote ID 信标 (WiFi Capturer)",
+						"mac", srcMAC,
+						"signal_dbm", signalStrength,
+						"msg_count", count,
+						"frame_body_hex", rawHex, // 打印纯净的 IE 列表 16 进制
+					)
+				}
+			}
+
+			// 3. 构造统一的 RawPacket
+			// 注意：由于启用了 NoCopy，必须复制 Payload 以防止底层 buffer 被 gopacket 复用覆盖
+			payloadCopy := bytes.Clone(frameBody)
+
 			rawPacket := RawPacket{
 				Source:    dot11.Address2.String(),
 				Timestamp: packet.Metadata().Timestamp,
@@ -135,10 +189,9 @@ func (c *WiFiCapturer) captureLoop(ctx context.Context, packetSource *gopacket.P
 			select {
 			case out <- rawPacket:
 			default:
-				c.mu.Lock()
-				c.stats.ParseErrors++ // 通道满视为丢弃
-				c.stats.LastDroppedHex = hex.EncodeToString(payloadCopy)[:min(128, len(payloadCopy)*2)]
-				c.mu.Unlock()
+				c.muStats.Lock()
+				c.stats.ParseErrors++
+				c.muStats.Unlock()
 				slog.Warn("WiFi 数据包处理通道已满，丢弃数据包", "mac", rawPacket.Source)
 			}
 		}
@@ -157,22 +210,7 @@ func (c *WiFiCapturer) Stop() error {
 }
 
 func (c *WiFiCapturer) GetStats() types.CaptureStats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// 返回副本
-	stats := c.stats
-	if len(stats.LastParsedHex) > 128 {
-		stats.LastParsedHex = stats.LastParsedHex[:128] + "..."
-	}
-	if len(stats.LastDroppedHex) > 128 {
-		stats.LastDroppedHex = stats.LastDroppedHex[:128] + "..."
-	}
-	return stats
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	c.muStats.Lock()
+	defer c.muStats.Unlock()
+	return c.stats
 }

@@ -9,6 +9,7 @@ import (
 
 	"remoteid-monitor/internal/config"
 	"remoteid-monitor/internal/drone"
+	"remoteid-monitor/pkg/types"
 	"remoteid-monitor/pkg/ws"
 
 	"github.com/gin-contrib/cors"
@@ -19,6 +20,7 @@ import (
 // StatusProvider 抽象出健康检查所需的接口
 type StatusProvider interface {
 	GetLastPacketTime() time.Time
+	GetCaptureStats() types.CaptureStats
 }
 
 var defaultAllowedOrigins = []string{

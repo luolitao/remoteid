@@ -7,15 +7,24 @@ import (
 )
 
 const (
-	asdStanOUI          = "\xFA\x0B\xBC"
-	asdStanOUIType      = 0x0D
-	legacyASTMOUI       = "\x06\x05\x04"
-	legacyASTMOUIType   = 0xFD
-	msgSize             = 25
-	astmProtocolVersion = 2
-	gbProtocolVersion   = 1
-	gb46750Magic        = 0xFF
-	gb46750MajorVersion = 0x1
+	// ASTM/ASD-STAN Vendor Specific IE OUI
+	asdStanOUI     = "\xFA\x0B\xBC" // ASD-STAN OUI
+	asdStanOUIType = 0x0D           // ASD-STAN OUI Type
+	msgSize        = 25             // 每条 Remote ID 消息固定 25 字节
+
+	// 旧版 ASTM / OpenDroneID 临时 OUI（部分 ESP32 早期实现使用）
+	legacyASTMOUI     = "\x06\x05\x04" // 旧版 ASTM OUI
+	legacyASTMOUIType = 0xFD           // 旧版 ASTM OUI Type
+
+	// ASTM 专属常量
+	astmProtocolVersion = 2 // ASTM F3411-22a 协议版本号（Message Header 的 低 4 位）
+
+	// GB 42590-2023 常量
+	gbProtocolVersion = 1 // GB 42590-2023 协议版本号（Message Header 的 低 4 位）
+
+	// GB 46750-2023 常量
+	gb46750Magic        = 0xFF // GB 46750 数据类型标识魔数（data[1]）
+	gb46750MajorVersion = 0x1  // GB 46750 主版本号（版本字节高3位）
 )
 
 type RemoteIDParser struct{}
@@ -46,6 +55,7 @@ func (p *RemoteIDParser) parseNANSDF(raw []byte) ([]types.DroneMessage, error) {
 	return messages, nil
 }
 
+// parseNANAttributes 解析 NAN Attributes 中的 Remote ID 数据
 func (p *RemoteIDParser) parseNANAttributes(raw []byte, offset int) []types.DroneMessage {
 	var messages []types.DroneMessage
 	for offset+3 <= len(raw) {
@@ -54,58 +64,109 @@ func (p *RemoteIDParser) parseNANAttributes(raw []byte, offset int) []types.Dron
 			break
 		}
 
-		attrLen := int(binary.LittleEndian.Uint16(raw[offset+1 : offset+3])) // 需导入 encoding/binary
+		if offset+3 > len(raw) {
+			break
+		}
+		attrLen := int(binary.LittleEndian.Uint16(raw[offset+1 : offset+3]))
+
 		if attrLen == 0 || offset+3+attrLen > len(raw) {
 			break
 		}
 
 		attrValue := raw[offset+3 : offset+3+attrLen]
-		if attrID == 0xDD && len(attrValue) >= 5 && attrValue[0] == 0xFA && attrValue[1] == 0x0B && attrValue[2] == 0xBC && attrValue[3] == 0x0D {
-			if msgStart := p.findASTMMessageHeader(attrValue, 4); msgStart >= 0 {
-				messages = append(messages, p.parseASTMBeaconMessages(attrValue[msgStart:])...)
+
+		// 检查 Vendor Specific Attribute (ID 0xDD)
+		if attrID == 0xDD && len(attrValue) >= 5 {
+			// 检查 OUI 是否为 ASD-STAN (FA:0B:BC) + OUI_Type (0x0D)
+			if attrValue[0] == 0xFA && attrValue[1] == 0x0B && attrValue[2] == 0xBC && attrValue[3] == 0x0D {
+
+				// ✅ 核心修复：attrValue 已经是从 OUI 开始的 Vendor Specific Body
+				payloadHex := fmt.Sprintf("%X", attrValue)
+				if len(payloadHex) > 256 { // 128 字节 = 256 个 hex 字符
+					payloadHex = payloadHex[:256] + "..."
+				}
+
+				// 扫描查找 ASTM 消息 Header（跳过 Message Counter + 可能的额外元数据）
+				msgStart := p.findASTMMessageHeader(attrValue, 4)
+				if msgStart >= 0 {
+					msgs := p.parseASTMBeaconMessages(attrValue[msgStart:])
+					for i := range msgs {
+						msgs[i].RawHex = payloadHex // ✅ 强制覆盖为纯净的 Payload Hex
+					}
+					messages = append(messages, msgs...)
+				}
 			}
 		}
+
+		// 移动到下一个 Attribute
 		offset += 3 + attrLen
 	}
+
 	return messages
 }
 
-func (p *RemoteIDParser) parseVendorIE(raw []byte) ([]types.DroneMessage, error) {
+// parseVendorIE 严格按照 802.11 TLV 格式遍历 Information Elements
+func (p *RemoteIDParser) parseVendorIE(ieList []byte) ([]types.DroneMessage, error) {
 	var messages []types.DroneMessage
 
-	// 1. 搜索标准 ASD-STAN OUI
-	for idx := 0; idx <= len(raw)-5; idx++ {
-		if string(raw[idx:idx+3]) != asdStanOUI || raw[idx+3] != asdStanOUIType {
-			continue
-		}
-		dataStart := idx + 4
-		if dataStart >= len(raw) {
-			continue
+	offset := 0
+	// 严格遍历 IE 列表
+	for offset < len(ieList) {
+		// 1. 检查是否足够读取 Element ID 和 Length
+		if offset+2 > len(ieList) {
+			break
 		}
 
-		if p.isGB46750Format(raw, dataStart) {
-			if msgs := p.parseGB46750Payload(raw[dataStart:]); len(msgs) > 0 {
-				return append(messages, msgs...), nil
+		elementID := ieList[offset]
+		length := int(ieList[offset+1])
+
+		// 2. 检查 Length 是否越界 (数据损坏防护)
+		if offset+2+length > len(ieList) {
+			break
+		}
+
+		// 3. 只处理 Vendor Specific IE (0xDD)
+		if elementID == 0xDD {
+			// 至少需要 OUI(3) + Type(1) = 4 字节
+			if length >= 4 {
+				ieData := ieList[offset+2 : offset+2+length]
+
+				// 检查 ASD-STAN OUI (FA:0B:BC) + Type (0x0D)
+				if ieData[0] == 0xFA && ieData[1] == 0x0B && ieData[2] == 0xBC && ieData[3] == 0x0D {
+
+					// 提取纯净 Hex (从 OUI 开始)
+					payloadHex := fmt.Sprintf("%X", ieData)
+					if len(payloadHex) > 256 {
+						payloadHex = payloadHex[:256] + "..."
+					}
+
+					// 解析 Remote ID 消息 (跳过 OUI+Type)
+					dataStart := 4
+
+					if p.isGB46750Format(ieData, dataStart) {
+						msgs := p.parseGB46750Payload(ieData[dataStart:])
+						for i := range msgs {
+							msgs[i].RawHex = payloadHex
+						}
+						messages = append(messages, msgs...)
+					} else {
+						msgStart := p.findASTMMessageHeader(ieData, dataStart)
+						if msgStart >= 0 {
+							msgs := p.parseASTMBeaconMessages(ieData[msgStart:])
+							for i := range msgs {
+								msgs[i].RawHex = payloadHex
+							}
+							messages = append(messages, msgs...)
+						}
+					}
+				}
 			}
 		}
-		if msgStart := p.findASTMMessageHeader(raw, dataStart); msgStart >= 0 {
-			if msgs := p.parseASTMBeaconMessages(raw[msgStart:]); len(msgs) > 0 {
-				return append(messages, msgs...), nil
-			}
-		}
+
+		// 4. 严格跳转到下一个 IE
+		offset += 2 + length
 	}
 
-	// 2. 搜索旧版 ASTM OUI
-	for idx := 0; idx <= len(raw)-5; idx++ {
-		if string(raw[idx:idx+3]) != legacyASTMOUI || raw[idx+3] != legacyASTMOUIType {
-			continue
-		}
-		if msgStart := p.findASTMMessageHeader(raw, idx+4); msgStart >= 0 {
-			if msgs := p.parseASTMBeaconMessages(raw[msgStart:]); len(msgs) > 0 {
-				return append(messages, msgs...), nil
-			}
-		}
-	}
 	return messages, nil
 }
 
@@ -119,9 +180,10 @@ func (p *RemoteIDParser) isGB46750Format(raw []byte, dataStart int) bool {
 	return ((raw[dataStart+2] >> 5) & 0x07) == gb46750MajorVersion
 }
 
-// findASTMMessageHeader 在 raw 中查找 ASTM 或 GB 消息 Header
-// scanStart 通常指向 OUI+Type 之后的第一个字节 (即 MsgCounter)。
-// Header 紧跟在 MsgCounter 之后，因此我们从 scanStart + 1 开始扫描。
+// findASTMMessageHeader 在 raw 中从 scanStart 开始扫描，查找 ASTM 或 GB 消息 Header
+// Header 格式: 高 4 位 = Message Type (0-5 或 15), 低 4 位 = Protocol Version (1=GB, 2=ASTM)
+// 即 byte 满足: msgType <= 5 (或 15) 且 (protoVer == 1 或 2)
+// 最多扫描 8 字节（覆盖 Message Counter + 可能的额外元数据）
 func (p *RemoteIDParser) findASTMMessageHeader(raw []byte, scanStart int) int {
 	start := scanStart + 1 // 跳过 Message Counter
 	maxScan := start + 2   // 最多允许 2 字节的偏移，应对非标准 padding
@@ -132,15 +194,15 @@ func (p *RemoteIDParser) findASTMMessageHeader(raw []byte, scanStart int) int {
 	for i := start; i < maxScan; i++ {
 		b := raw[i]
 		msgType := (b >> 4) & 0x0F
-		protoVer := b & 0x0F
+		protoVer := b & 0x0F // 提取低 4 位作为 Protocol Version
 
-		// 1. 标准格式：高4位=消息类型(0-5 或 15(Packed)), 低4位=协议版本(1=GB, 2=ASTM)
+		// 标准格式：高4位=消息类型(0-5 或 15), 低4位=协议版本(1=GB, 2=ASTM)
 		// 注意：容忍 protoVer == 0，因为某些固件在 Packed 内部消息中会错误地将 version 设为 0
 		if (msgType <= 5 || msgType == 15) && (protoVer == 1 || protoVer == 2 || protoVer == 0) {
 			return i
 		}
 
-		// 2. 兼容极旧版格式：高4位=协议版本(1或2), 低4位=消息类型(0-5)
+		// 兼容极旧版格式：高4位=协议版本(1或2), 低4位=消息类型(0-5)
 		if (protoVer == 1 || protoVer == 2) && msgType <= 5 {
 			return i
 		}
@@ -200,12 +262,12 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 						Standard:    standard,
 						Data:        data,
 						Source:      "ASTM",
-						RawHex:      fmt.Sprintf("%X", innerMsgData), // 保留调试信息
+						// 保留 RawHex 供调试
 					})
 				}
 				offset += singleMsgSize
 			}
-			// Packed Message 处理完毕，通常一个 IE 中只有一个 Pack，退出循环
+			// Packed Message 处理完毕，退出当前循环
 			break
 		}
 		// ==============================================================
@@ -215,7 +277,7 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 		var data map[string]string
 		var standard string
 
-		if protoVer == gbProtocolVersion {
+		if protoVer == gbProtocolVersion || protoVer == 0 {
 			messageType, data = p.decodeGBMessage(msgData, msgType)
 			standard = "GB 42590-2023"
 		} else {
@@ -229,7 +291,6 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 				Standard:    standard,
 				Data:        data,
 				Source:      "ASTM",
-				RawHex:      fmt.Sprintf("%X", msgData),
 			})
 		}
 		offset += msgSize

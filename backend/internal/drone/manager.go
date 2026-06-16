@@ -25,6 +25,7 @@ type Manager struct {
 	mu             sync.RWMutex
 	lastPacketTime time.Time
 	aggregateStats types.CaptureStats // 聚合所有捕获器的统计
+
 }
 
 func NewManager(wsManager *ws.Manager, wifiIface string) *Manager {
@@ -98,7 +99,7 @@ func (m *Manager) processLoop(packetChan <-chan capture.RawPacket) {
 			for i := range messages {
 				messages[i].Data["signal_dbm"] = fmt.Sprintf("%d", pkt.SignalDBM)
 				messages[i].Data["transport"] = pkt.Transport
-				messages[i].RawHex = rawHex // 供 processor 的警告日志使用
+
 			}
 
 			// 4. 处理
