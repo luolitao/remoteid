@@ -1,11 +1,11 @@
 <template>
-  <div id="splitter" @mousedown="startResize" title="Drag to resize"></div>
+  <div id="splitter" title="Drag to resize" @mousedown="startResize"></div>
 </template>
 
 <script setup>
 // 接收父组件传来的当前侧边栏宽度
 const props = defineProps({
-  width: { type: Number, default: 350 }
+  width: { type: Number, default: 350 },
 })
 
 // 定义 update:width 事件，用于 v-model 双向绑定
@@ -19,7 +19,7 @@ const startResize = (e) => {
   // 如果不加这两行，鼠标稍微移动一点就会选中文字，导致浏览器中断拖拽逻辑
   document.body.style.userSelect = 'none'
   document.body.style.cursor = 'ew-resize'
-  
+
   // 🎯 核心修复：事件必须绑定到 document，确保鼠标移出分割条区域后依然能响应
   document.addEventListener('mousemove', doResize)
   document.addEventListener('mouseup', stopResize)
@@ -28,11 +28,11 @@ const startResize = (e) => {
 
 const doResize = (e) => {
   if (!isResizing) return
-  
+
   // 计算新宽度：屏幕总宽 - 鼠标X坐标 - Splitter自身宽度(6px)
   // 限制宽度在 250px 到 600px 之间
   const newWidth = Math.max(250, Math.min(600, window.innerWidth - e.clientX - 6))
-  
+
   emit('update:width', newWidth) // 通知父组件更新
 }
 
@@ -41,7 +41,7 @@ const stopResize = () => {
   // 恢复文本选中和鼠标指针
   document.body.style.userSelect = ''
   document.body.style.cursor = ''
-  
+
   document.removeEventListener('mousemove', doResize)
   document.removeEventListener('mouseup', stopResize)
 }

@@ -27,34 +27,6 @@ var gb46750VAccuracyNames = []string{"≥150m/未知", "<150m", "<45m", "<25m", 
 var gb46750SAccuracyNames = []string{"≥10m/s/未知", "<10m/s", "<3m/s", "<1m/s", "<0.3m/s"}
 var gb46750TSAccuracyNames = []string{">0.5s/未知", "≤0.5s", "≤0.4s", "≤0.3s", "≤0.2s", "≤0.1s", "≤50ms", "≤20ms", "≤10ms"}
 
-// 构建 GB 46750 解析规则表
-var gb46750Rules = map[uint8]gb46750Rule{
-	// 标识字节 1
-	0x80: {size: 20, parse: func(b []byte) (string, bool) { return cleanString(b, " "), true }, key: "unique_id"},
-	0x40: {size: 8, parse: func(b []byte) (string, bool) { return cleanString(b, " "), true }, key: "realname_id"},
-	0x20: {size: 1, parse: func(b []byte) (string, bool) { return fmt.Sprintf("%d", b[0]), true }, key: "operation_category"},
-	0x10: {size: 1, parse: func(b []byte) (string, bool) { return lookupName(gb46750UACategoryNames, int(b[0])), true }, key: "ua_category"},
-	0x08: {size: 1, parse: func(b []byte) (string, bool) { return lookupName(gb46750RCSLocTypeNames, int(b[0])), true }, key: "rcs_loc_type"},
-	0x04: {size: 8, parse: func(b []byte) (string, bool) {
-		lon, ok1 := parseCoordLE(b, 0, 180.0)
-		lat, ok2 := parseCoordLE(b, 4, 90.0)
-		if !ok1 || !ok2 {
-			return "", false
-		}
-		return fmt.Sprintf("lon:%.7f,lat:%.7f", lon, lat), true // 可拆分为两个 key，此处为简洁合并展示
-	}, key: "rcs_location"},
-	0x02: {size: 2, parse: func(b []byte) (string, bool) {
-		raw := binary.LittleEndian.Uint16(b)
-		if raw == 0xFFFF {
-			return "", false
-		}
-		return fmt.Sprintf("%.2f", float64(raw)/2.0-1000.0), true
-	}, key: "rcs_altitude"}, // 标识字节 2
-	//0x80: {size: 8, parse: func(b []byte) (string, bool) { // 注意：此处 map key 会覆盖，实际需按 byteIdx 区分，见下方优化实现
-	//	return "", false
-	//}, key: ""}, // 占位，实际逻辑在下方自定义处理以保证严谨性
-}
-
 func (p *RemoteIDParser) parseGB46750Payload(payload []byte) []types.DroneMessage {
 	// 1. 严格的基础长度校验：DataType(1) + Version(1) + Length(1) + 至少1个Flag(1) = 4 字节
 	if len(payload) < 4 {
@@ -195,8 +167,8 @@ func (p *RemoteIDParser) getGB46750Rule(byteIdx, bit int) gb46750Rule {
 		case 1:
 			return gb46750Rule{2, func(b []byte) (string, bool) {
 				raw := binary.LittleEndian.Uint16(b)
-				if raw == 0xFFFF {
-					return " ", false
+				if raw == 0x00000 {
+					return "", false
 				}
 				return fmt.Sprintf("%.2f", float64(raw)/2.0-1000.0), true
 			}, "rcs_altitude"}
@@ -212,7 +184,7 @@ func (p *RemoteIDParser) getGB46750Rule(byteIdx, bit int) gb46750Rule {
 			return gb46750Rule{2, func(b []byte) (string, bool) {
 				raw := binary.LittleEndian.Uint16(b)
 				if raw == 0xFFFF {
-					return " ", false
+					return "", false
 				}
 				return fmt.Sprintf("%.2f", float64(raw)/10.0), true
 			}, "direction"}
@@ -220,22 +192,22 @@ func (p *RemoteIDParser) getGB46750Rule(byteIdx, bit int) gb46750Rule {
 			return gb46750Rule{2, func(b []byte) (string, bool) {
 				raw := binary.LittleEndian.Uint16(b)
 				if raw == 0xFFFF {
-					return " ", false
+					return "", false
 				}
 				return fmt.Sprintf("%.2f", float64(raw)/10.0), true
 			}, "speed_h"}
 		case 4:
 			return gb46750Rule{2, func(b []byte) (string, bool) {
 				raw := binary.LittleEndian.Uint16(b)
-				if raw == 0xFFFF {
-					return " ", false
+				if raw == 0x00000 {
+					return "", false
 				}
 				return fmt.Sprintf("%.2f", float64(raw)/2.0-9000.0), true
 			}, "height_m"}
 		case 3:
 			return gb46750Rule{1, func(b []byte) (string, bool) {
 				if b[0] == 0xFF {
-					return " ", false
+					return "", false
 				}
 				v := float64(b[0]&0x7F) / 2.0
 				if (b[0] & 0x80) != 0 {
@@ -246,16 +218,16 @@ func (p *RemoteIDParser) getGB46750Rule(byteIdx, bit int) gb46750Rule {
 		case 2:
 			return gb46750Rule{2, func(b []byte) (string, bool) {
 				raw := binary.LittleEndian.Uint16(b)
-				if raw == 0xFFFF {
-					return " ", false
+				if raw == 0x00000 {
+					return "", false
 				}
 				return fmt.Sprintf("%.2f", float64(raw)/2.0-1000.0), true
 			}, "altitude_geo"}
 		case 1:
 			return gb46750Rule{2, func(b []byte) (string, bool) {
 				raw := binary.LittleEndian.Uint16(b)
-				if raw == 0xFFFF {
-					return " ", false
+				if raw == 0x00000 {
+					return "", false
 				}
 				return fmt.Sprintf("%.2f", float64(raw)/2.0-1000.0), true
 			}, "altitude_baro"}

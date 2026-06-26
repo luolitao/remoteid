@@ -11,13 +11,16 @@ import (
 )
 
 func (s *Server) listAlerts(c *gin.Context) {
-	limitStr := c.DefaultQuery("limit", "50")
-	limit := 50
-	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
-		limit = l
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if offset < 0 {
+		offset = 0
 	}
 
-	alerts := s.processor.GetAlerts(strconv.Itoa(limit))
+	alerts, total := s.processor.GetAlerts(limit, offset) // 现在返回两个值
 	if alerts == nil {
 		alerts = []*types.Alert{}
 	}
@@ -25,6 +28,9 @@ func (s *Server) listAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"alerts": alerts,
 		"count":  len(alerts),
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 

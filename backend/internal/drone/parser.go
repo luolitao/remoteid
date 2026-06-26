@@ -3,6 +3,9 @@ package drone
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
+	"strings"
+
 	"remoteid-monitor/pkg/types"
 )
 
@@ -318,4 +321,441 @@ func (p *RemoteIDParser) parseASTMBeaconMessages(payload []byte) []types.DroneMe
 	}
 
 	return messages
+}
+
+// ================= 新增：数据合并方法 =================
+
+// MergeMessages 将多条 DroneMessage 的数据合并更新到 DroneData 对象中
+// 只负责字段映射，不包含业务日志或位置持久化逻辑（由调用方处理）
+func (p *RemoteIDParser) oldMergeMessages(drone *types.DroneData, messages []types.DroneMessage) {
+	for _, msg := range messages {
+		msgType := strings.TrimSpace(msg.MessageType)
+
+		// 清洗 Data map 的所有 key 和 value，转为 string 形式
+		cleanData := make(map[string]string, len(msg.Data))
+		for k, v := range msg.Data {
+			strVal := fmt.Sprintf("%v", v)
+			trimmedVal := strings.TrimSpace(strVal)
+			cleanData[strings.TrimSpace(k)] = trimmedVal
+		}
+
+		// 辅助取值函数
+		getStr := func(key string) string { return cleanData[key] }
+		getFloat := func(key string) float64 {
+			if f, err := strconv.ParseFloat(cleanData[key], 64); err == nil {
+				return f
+			}
+			return 0
+		}
+		getInt := func(key string) int {
+			if i, err := strconv.Atoi(cleanData[key]); err == nil {
+				return i
+			}
+			return 0
+		}
+
+		switch msgType {
+		case "basic_id":
+			if uasID := getStr("uas_id"); uasID != "" && uasID != "UNKNOWN" {
+				drone.UASID = uasID
+			}
+			if uaType := getStr("ua_type"); uaType != "" {
+				drone.UAType = uaType
+			}
+			if idType := getStr("id_type"); idType != "" {
+				drone.IDType = idType
+			}
+			drone.Standard = strings.TrimSpace(msg.Standard)
+			drone.Source = strings.TrimSpace(msg.Source)
+
+		case "location":
+			if lat := getFloat("latitude"); lat != 0 {
+				drone.Latitude = lat
+			}
+			if lon := getFloat("longitude"); lon != 0 {
+				drone.Longitude = lon
+			}
+			// 高度优先级：baro > geo > height_m
+			altBaro := getFloat("altitude_baro")
+			altGeo := getFloat("altitude_geo")
+			heightM := getFloat("height_m")
+			if altBaro != 0 {
+				drone.Altitude = altBaro
+			} else if altGeo != 0 {
+				drone.Altitude = altGeo
+			} else if heightM != 0 && drone.Altitude == 0 {
+				drone.Altitude = heightM
+			}
+			// 注意：高度合理性检查由 processor 负责，此处不处理
+
+			if speed := getFloat("speed_h"); speed != 0 {
+				drone.Speed = speed
+			}
+			if heading := getFloat("direction"); heading != 0 {
+				drone.Heading = heading
+			}
+			if speedV := getFloat("speed_v"); speedV != 0 {
+				drone.SpeedVertical = speedV
+			}
+			if status := getStr("status"); status != "" {
+				drone.FlightStatus = status
+			}
+			if ht := getStr("height_type"); ht != "" {
+				drone.HeightType = ht
+			}
+			if ha := getStr("h_accuracy"); ha != "" {
+				drone.HAccuracy = ha
+			}
+			if va := getStr("v_accuracy"); va != "" {
+				drone.VAccuracy = va
+			}
+			if sa := getStr("s_accuracy"); sa != "" {
+				drone.SAccuracy = sa
+			}
+			if ts := getStr("timestamp"); ts != "" {
+				drone.LocationTimestamp = ts
+			}
+
+		case "operator_id":
+			if opID := getStr("operator_id"); opID != "" && opID != " " {
+				drone.OperatorID = opID
+			}
+
+		case "system":
+			if opLat := getFloat("operator_lat"); opLat != 0 {
+				drone.OperatorLatitude = opLat
+			}
+			if opLon := getFloat("operator_lon"); opLon != 0 {
+				drone.OperatorLongitude = opLon
+			}
+			if opAlt := getFloat("operator_alt"); opAlt != 0 {
+				drone.OperatorAltitude = opAlt
+			}
+			if classification := getStr("classification"); classification != "" {
+				drone.Classification = classification
+			}
+			if areaRadius := getInt("area_radius_m"); areaRadius > 0 {
+				drone.AreaRadiusM = areaRadius
+			}
+
+		case "gb46750":
+			drone.Standard = strings.TrimSpace(msg.Standard)
+			drone.Source = strings.TrimSpace(msg.Source)
+			if uasID := getStr("unique_id"); uasID != "" {
+				drone.UASID = uasID
+			}
+			if realnameID := getStr("realname_id"); realnameID != "" {
+				drone.OperatorID = realnameID
+			}
+			if uaCat := getStr("ua_category"); uaCat != "" {
+				drone.UAType = uaCat
+			}
+			drone.IDType = "SerialNumber"
+
+			if lat := getFloat("latitude"); lat != 0 {
+				drone.Latitude = lat
+			}
+			if lon := getFloat("longitude"); lon != 0 {
+				drone.Longitude = lon
+			}
+			altBaro := getFloat("altitude_baro")
+			altGeo := getFloat("altitude_geo")
+			heightM := getFloat("height_m")
+			if altBaro != 0 {
+				drone.Altitude = altBaro
+			} else if altGeo != 0 {
+				drone.Altitude = altGeo
+			} else if heightM != 0 {
+				drone.Altitude = heightM
+			}
+			// 高度合理性检查由 processor 负责
+
+			if speed := getFloat("speed_h"); speed != 0 {
+				drone.Speed = speed
+			}
+			if speedV := getFloat("speed_v"); speedV != 0 {
+				drone.SpeedVertical = speedV
+			}
+			if heading := getFloat("direction"); heading != 0 {
+				drone.Heading = heading
+			}
+			if status := getStr("status"); status != "" {
+				drone.FlightStatus = status
+			}
+			if ht := getStr("height_type"); ht != "" {
+				drone.HeightType = ht
+			}
+			if ha := getStr("h_accuracy"); ha != "" {
+				drone.HAccuracy = ha
+			}
+			if va := getStr("v_accuracy"); va != "" {
+				drone.VAccuracy = va
+			}
+			if sa := getStr("s_accuracy"); sa != "" {
+				drone.SAccuracy = sa
+			}
+			if ts := getStr("timestamp"); ts != "" {
+				drone.LocationTimestamp = ts
+			}
+			if rcsLat := getFloat("rcs_latitude"); rcsLat != 0 {
+				drone.OperatorLatitude = rcsLat
+			}
+			if rcsLon := getFloat("rcs_longitude"); rcsLon != 0 {
+				drone.OperatorLongitude = rcsLon
+			}
+			if rcsAlt := getFloat("rcs_altitude"); rcsAlt != 0 {
+				drone.OperatorAltitude = rcsAlt
+			}
+			if opCat := getStr("operation_category"); opCat != "" {
+				drone.Classification = "GB46750-Cat" + opCat
+			}
+		}
+	}
+}
+
+// MergeMessages 合并所有消息，填充通用字段和协议特定数据
+func (p *RemoteIDParser) MergeMessages(drone *types.DroneData, messages []types.DroneMessage) {
+	if len(messages) == 0 {
+		return
+	}
+
+	// 确定协议类型（取第一条非空）
+	var protocol string
+	for _, msg := range messages {
+		if msg.Standard != "" {
+			if strings.Contains(msg.Standard, "46750") {
+				protocol = "gb46750"
+			} else if strings.Contains(msg.Standard, "42590") {
+				protocol = "gb42590"
+			} else if strings.Contains(msg.Standard, "ASTM") {
+				protocol = "astm"
+			}
+			break
+		}
+	}
+	drone.Protocol = protocol
+
+	// 先清空协议特定数据（避免残留）
+	drone.GB46750 = nil
+	drone.GB42590 = nil
+	drone.ASTM = nil
+
+	// 遍历所有消息，分别填充
+	for _, msg := range messages {
+		// 填充通用字段
+		p.fillCommonFields(drone, msg)
+
+		// 根据协议填充特定字段
+		switch protocol {
+		case "gb46750":
+			p.fillGB46750Specific(drone, msg)
+		case "gb42590":
+			p.fillGB42590Specific(drone, msg)
+		case "astm":
+			p.fillASTMSpecific(drone, msg)
+		}
+	}
+
+	// 在 MergeMessages 末尾
+	if protocol == "gb46750" && drone.GB46750 != nil {
+		if drone.UASID == "" && drone.GB46750.UniqueID != "" {
+			drone.UASID = drone.GB46750.UniqueID
+		}
+		if drone.OperatorID == "" && drone.GB46750.RealNameID != "" {
+			drone.OperatorID = drone.GB46750.RealNameID
+		}
+	}
+}
+
+// fillCommonFields 提取所有协议共有的字段
+func (p *RemoteIDParser) fillCommonFields(drone *types.DroneData, msg types.DroneMessage) {
+	// 清洗数据（同前）
+	cleanData := make(map[string]string, len(msg.Data))
+	for k, v := range msg.Data {
+		strVal := fmt.Sprintf("%v", v)
+		trimmedVal := strings.TrimSpace(strVal)
+		cleanData[strings.TrimSpace(k)] = trimmedVal
+	}
+
+	getStr := func(key string) string { return cleanData[key] }
+	getFloat := func(key string) float64 {
+		if f, err := strconv.ParseFloat(cleanData[key], 64); err == nil {
+			return f
+		}
+		return 0
+	}
+	getInt := func(key string) int {
+		if i, err := strconv.Atoi(cleanData[key]); err == nil {
+			return i
+		}
+		return 0
+	}
+
+	// 只提取通用字段（不包含协议特定字段）
+	if uasID := getStr("uas_id"); uasID != "" && uasID != "UNKNOWN" {
+		drone.UASID = uasID
+	}
+	if uaType := getStr("ua_type"); uaType != "" {
+		drone.UAType = uaType
+	}
+	if idType := getStr("id_type"); idType != "" {
+		drone.IDType = idType
+	}
+	if opID := getStr("operator_id"); opID != "" && opID != " " {
+		drone.OperatorID = opID
+	}
+
+	// 位置
+	if lat := getFloat("latitude"); lat != 0 {
+		drone.Latitude = lat
+	}
+	if lon := getFloat("longitude"); lon != 0 {
+		drone.Longitude = lon
+	}
+
+	// 高度（仅通用高度，不覆盖协议特定）
+	altBaro := getFloat("altitude_baro")
+	altGeo := getFloat("altitude_geo")
+	heightM := getFloat("height_m")
+	if altBaro != 0 {
+		drone.Altitude = altBaro
+	} else if altGeo != 0 {
+		drone.Altitude = altGeo
+	} else if heightM != 0 && drone.Altitude == 0 {
+		drone.Altitude = heightM
+	}
+
+	if speed := getFloat("speed_h"); speed != 0 {
+		drone.Speed = speed
+	}
+	if heading := getFloat("direction"); heading != 0 {
+		drone.Heading = heading
+	}
+	if speedV := getFloat("speed_v"); speedV != 0 {
+		drone.SpeedVertical = speedV
+	}
+
+	if status := getStr("status"); status != "" {
+		drone.FlightStatus = status
+	}
+	if ht := getStr("height_type"); ht != "" {
+		drone.HeightType = ht
+	}
+	if ha := getStr("h_accuracy"); ha != "" {
+		drone.HAccuracy = ha
+	}
+	if va := getStr("v_accuracy"); va != "" {
+		drone.VAccuracy = va
+	}
+	if sa := getStr("s_accuracy"); sa != "" {
+		drone.SAccuracy = sa
+	}
+	if ts := getStr("timestamp"); ts != "" {
+		drone.LocationTimestamp = ts
+	}
+
+	// 操作员信息（通用）
+	if opLat := getFloat("operator_lat"); opLat != 0 {
+		drone.OperatorLatitude = opLat
+	}
+	if opLon := getFloat("operator_lon"); opLon != 0 {
+		drone.OperatorLongitude = opLon
+	}
+	if opAlt := getFloat("operator_alt"); opAlt != 0 {
+		drone.OperatorAltitude = opAlt
+	}
+	if classification := getStr("classification"); classification != "" {
+		drone.Classification = classification
+	}
+	if areaRadius := getInt("area_radius_m"); areaRadius > 0 {
+		drone.AreaRadiusM = areaRadius
+	}
+
+	// 标准/Source（由上一层保留，此处不覆盖）
+	// drone.Standard 在外部已设置
+	// drone.Source 同理
+}
+
+// fillGB46750Specific 填充 GB46750 特有字段
+func (p *RemoteIDParser) fillGB46750Specific(drone *types.DroneData, msg types.DroneMessage) {
+	if drone.GB46750 == nil {
+		drone.GB46750 = &types.GB46750Data{}
+	}
+	// 从 msg.Data 提取特有字段
+	if v, ok := msg.Data["version"]; ok {
+		drone.GB46750.Version = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["unique_id"]; ok {
+		drone.GB46750.UniqueID = fmt.Sprintf("%v", v)
+	}
+	// 注意：realname_id 也已存在，继续保留
+	if v, ok := msg.Data["ua_category"]; ok {
+		drone.GB46750.UACategory = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["realname_id"]; ok {
+		drone.GB46750.RealNameID = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["operation_category"]; ok {
+		drone.GB46750.OperationCategory = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["rcs_loc_type"]; ok {
+		drone.GB46750.RCSLocType = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["rcs_altitude"]; ok {
+		if f, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64); err == nil {
+			drone.GB46750.RCSAltitude = f
+		}
+	}
+	if v, ok := msg.Data["status"]; ok {
+		drone.GB46750.Status = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["coord_system"]; ok {
+		drone.GB46750.CoordSystem = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["h_accuracy"]; ok {
+		drone.GB46750.HAccuracy = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["v_accuracy"]; ok {
+		drone.GB46750.VAccuracy = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["s_accuracy"]; ok {
+		drone.GB46750.SAccuracy = fmt.Sprintf("%v", v)
+	}
+	if v, ok := msg.Data["timestamp_ms"]; ok {
+		if ts, err := strconv.ParseUint(fmt.Sprintf("%v", v), 10, 64); err == nil {
+			drone.GB46750.TimestampMS = ts
+		}
+	}
+	if v, ok := msg.Data["ts_accuracy"]; ok {
+		drone.GB46750.TSSAccuracy = fmt.Sprintf("%v", v)
+	}
+
+	// 遥控站位置（如果有）
+	if lon, ok := msg.Data["rcs_longitude"]; ok {
+		if lonF, err := strconv.ParseFloat(fmt.Sprintf("%v", lon), 64); err == nil {
+			if drone.GB46750.RCSLocation == nil {
+				drone.GB46750.RCSLocation = &types.Position{}
+			}
+			drone.GB46750.RCSLocation.Longitude = lonF
+		}
+	}
+	if lat, ok := msg.Data["rcs_latitude"]; ok {
+		if latF, err := strconv.ParseFloat(fmt.Sprintf("%v", lat), 64); err == nil {
+			if drone.GB46750.RCSLocation == nil {
+				drone.GB46750.RCSLocation = &types.Position{}
+			}
+			drone.GB46750.RCSLocation.Latitude = latF
+		}
+	}
+	// 可添加高度等
+}
+
+// fillGB42590Specific 预留
+func (p *RemoteIDParser) fillGB42590Specific(drone *types.DroneData, msg types.DroneMessage) {
+	// 目前无特有字段，可留空
+}
+
+// fillASTMSpecific 预留
+func (p *RemoteIDParser) fillASTMSpecific(drone *types.DroneData, msg types.DroneMessage) {
+	// 目前无特有字段，可留空
 }

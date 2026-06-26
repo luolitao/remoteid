@@ -375,7 +375,6 @@ const clearTrajectories = () => {
 }
 
 // ---- 轨迹 ----
-// ---- 轨迹 ----
 const showAllTrajectories = async () => {
   if (!map.value) return
   clearTrajectories()
@@ -391,6 +390,20 @@ const showAllTrajectories = async () => {
   for (const drone of drones) {
     await showDroneTrajectory(drone.mac)
   }
+}
+
+const showSelectedTrajectory = async () => {
+  if (!map.value || !props.selectedDrone) return
+  clearTrajectories()
+  logger.info(`✅ 活跃的无人机: ${props.selectedDrone.mac} `)
+  
+  if (props.selectedDrone.mac) {
+    await showDroneTrajectory(props.selectedDrone.mac)
+  } else {
+    // 若无选中，则显示所有（或提示）
+    logger.warn('⚠️ 当前没有活跃的无人机，开始加载所有无人机的轨迹...')
+    showAllTrajectories()
+  } 
 }
 
 const showDroneTrajectory = async (mac) => {
@@ -510,6 +523,8 @@ const updatePlaybackMarker = (idx) => {
 defineExpose({
   updateDroneMarker,
   showAllTrajectories,
+  showSelectedTrajectory,
+  showDroneTrajectory,
   clearTrajectories,
 })
 
@@ -525,10 +540,6 @@ onMounted(() => {
       }
     })
   })
-
-  // ❌ 彻底删除以下两行！它们不属于地图组件的职责
-  // initWebSocket()
-  // pollInterval = setInterval(refreshData, 5000)
 })
 
 onUnmounted(() => {

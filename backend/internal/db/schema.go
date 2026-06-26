@@ -81,6 +81,7 @@ func migrateSchema() error {
 		{"drones", "operator_latitude", "REAL"}, {"drones", "operator_longitude", "REAL"},
 		{"drones", "area_radius_m", "INTEGER"}, {"drones", "classification_region", "TEXT"},
 		{"drones", "signal_strength", "TEXT"}, {"drones", "battery_level", "TEXT"}, {"drones", "flight_time", "TEXT"},
+		{"drones", "protocol_data", "TEXT"}, // 新增
 	}
 
 	for _, m := range migrations {

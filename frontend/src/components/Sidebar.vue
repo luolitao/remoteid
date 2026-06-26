@@ -319,7 +319,7 @@
         <button class="sidebarButton" title="Show all traces" @click="$emit('show-trajectories')">
           Trk
         </button>
-        <button class="sidebarButton" title="Clear traces" @click="clearTrajectories">Clr</button>
+        <button class="sidebarButton" title="Clear traces" @click="$emit('clear-trajectories')">Clr</button>
 
         <!-- 🆕 新增：调试面板触发按钮 -->
         <button
@@ -362,17 +362,13 @@ import logger from '@/utils/logger'
 
 const props = defineProps({
   initialWidth: { type: Number, default: 350 },
-  selectedDrone: { type: Object, default: null }, // ✅ 修正 Prop 名称
+  selectedDrone: { type: Object, default: null },
 })
 
-// ✅ 核心修复：将 prop 映射为模板可直接使用的变量
-// 这样模板里所有的 selectedDrone 都能正常工作了！
 const selectedDrone = toRef(props, 'selectedDrone')
 
 const emit = defineEmits([
-  // ❌ 删除 update:modelValue
-  // 'update:modelValue',
-  'update:selectedDrone', // ✅ 修正 Emit 名称
+  'update:selectedDrone',
   'close',
   'show-trajectories',
   'clear-trajectories',
@@ -380,24 +376,19 @@ const emit = defineEmits([
 
 const store = useDroneStore()
 
-// ---- 内部状态 ----
+// 内部状态
 const width = ref(props.initialWidth)
 const searchQuery = ref('')
 const showInfoBlock = ref(false)
-
-// ❌ 修改前：const localSelectedDrone = ref(props.modelValue)
-const localSelectedDrone = ref(props.selectedDrone) // ✅ 修正
-
+const localSelectedDrone = ref(props.selectedDrone)
 const selectedDroneDetail = ref(null)
 const dataStaleWarning = ref(false)
-
 let staleCheckInterval = null
 
-// ❌ 修改前：watch(() => props.modelValue, (newVal) => {
+// 监听外部 selectedDrone 变化
 watch(
   () => props.selectedDrone,
   (newVal) => {
-    // ✅ 修正
     localSelectedDrone.value = newVal
     if (!newVal) {
       showInfoBlock.value = false
@@ -406,7 +397,7 @@ watch(
   },
 )
 
-// ---- 列选择配置 ----
+// ---- 列配置 ----
 const availableColumns = [
   { key: 'ua_type', label: 'Type', align: 'left', size: 'var(--FS2, 12px)', default: true },
   { key: 'standard', label: 'Std', align: 'left', size: 'var(--FS2, 12px)', default: true },
@@ -431,7 +422,7 @@ const visibleColumnList = computed(() =>
   availableColumns.filter((c) => visibleColumns.value[c.key]),
 )
 
-// ---- 计算属性 ----
+// ---- 搜索过滤 ----
 const filteredDrones = computed(() => {
   let drones = store.activeDrones
   const q = searchQuery.value.toLowerCase().trim()
@@ -446,21 +437,28 @@ const filteredDrones = computed(() => {
   return drones
 })
 
-// ---- 动态解析无人机所有详情字段 ----
+// ---- 详情字段动态渲染（修复核心） ----
 const detailEntries = computed(() => {
-  // 合并基础列表数据和 API 拉取的详情数据
   const data = { ...selectedDrone.value, ...selectedDroneDetail.value }
+  // 如果无数据，直接返回空数组
   if (!data || Object.keys(data).length === 0) return []
 
-  // 字段映射与格式化规则 (将后端 snake_case 转为人类可读标签，并格式化数值)
+  // 字段配置（含回退逻辑）
   const fieldConfig = {
-    protocol: { label: 'Protocol', format: (v) => v || 'N/A' },
-    uas_id: { label: 'UAS ID', format: (v) => v || 'N/A' },
-    ua_type: { label: 'UA Type', format: (v) => v || 'N/A' },
+    protocol: { label: 'Protocol', format: (v) => v || 'N/A', order: 1 },
+    uas_id: { label: 'UAS ID', format: (v) => v || 'N/A', order: 2 },
+    ua_type: {
+      label: 'UA Type',
+      format: (v, d) => v || d?.ua_category || 'N/A',
+      order: 3,
+    },
+    operator_id: {
+      label: 'Operator ID',
+      format: (v, d) => v || d?.realname_id || 'N/A',
+    },
     standard: { label: 'Standard', format: (v) => v || 'N/A' },
     source: { label: 'Source', format: (v) => v || 'N/A' },
     id_type: { label: 'ID Type', format: (v) => v || 'N/A' },
-    operator_id: { label: 'Operator ID', format: (v) => v || 'N/A' },
     altitude: {
       label: 'Altitude (Geo)',
       format: (v) => (v != null ? `${parseFloat(v).toFixed(1)} m` : 'N/A'),
@@ -483,9 +481,6 @@ const detailEntries = computed(() => {
     },
     flight_status: { label: 'Flight Status', format: (v) => v || 'N/A' },
     height_type: { label: 'Height Type', format: (v) => v || 'N/A' },
-    signal_strength: { label: 'Signal', format: (v) => v || 'N/A' },
-    rssi: { label: 'RSSI', format: (v) => (v != null ? `${v} dBm` : 'N/A') },
-    battery_level: { label: 'Battery', format: (v) => v || 'N/A' },
     flight_time: { label: 'Flight Time', format: (v) => v || 'N/A' },
     operator_latitude: {
       label: 'Operator Lat',
@@ -502,33 +497,64 @@ const detailEntries = computed(() => {
     s_accuracy: { label: 'S Accuracy', format: (v) => v || 'N/A' },
     first_seen: { label: 'First Seen', format: (v) => formatTime(v) },
     last_seen: { label: 'Last Seen', format: (v) => timeAgo(v) },
+    // GB 46750 特有字段
+    ua_category: { label: 'UA Category', format: (v) => v || 'N/A' },
+    realname_id: { label: 'Realname ID', format: (v) => v || 'N/A' },
+    operation_category: { label: 'Operation Category', format: (v) => v || 'N/A' },
+    rcs_loc_type: { label: 'RCS Loc Type', format: (v) => v || 'N/A' },
+    rcs_latitude: { label: 'RCS Lat', format: (v) => (v != null ? formatCoord(v) : 'N/A') },
+    rcs_longitude: { label: 'RCS Lng', format: (v) => (v != null ? formatCoord(v) : 'N/A') },
+    rcs_altitude: {
+      label: 'RCS Altitude',
+      format: (v) => (v != null ? `${parseFloat(v).toFixed(1)} m` : 'N/A'),
+    },
+    gb46750_status: { label: 'GB46750 Status', format: (v) => v || 'N/A' },
+    coord_system: { label: 'Coord System', format: (v) => v || 'N/A' },
+    ts_accuracy: { label: 'TS Accuracy', format: (v) => v || 'N/A' },
   }
 
-  // 排除已经在顶部 Header 和基础坐标区单独展示的字段
-  const excludeKeys = ['mac', 'latitude', 'longitude']
+  const excludeKeys = [
+    'uas_id',
+    'mac',
+    'latitude',
+    'longitude',
+    'gb46750',
+    'gb46750_raw',
+    'signal_strength',
+    'rssi',
+    'battery_level',
+  ]
 
   const entries = []
   for (const [key, value] of Object.entries(data)) {
     if (excludeKeys.includes(key)) continue
 
-    // 如果配置表里有，用配置表的 label 和 format
-    if (fieldConfig[key]) {
+    const config = fieldConfig[key]
+    if (config) {
+      // 安全调用 format，传入 data 作为第二个参数
+      const formatted = config.format(value, data)
       entries.push({
-        label: fieldConfig[key].label,
-        value: fieldConfig[key].format(value),
+        label: config.label,
+        value: formatted,
+        order: config.order || 999,
       })
     } else {
-      // 🎯 兜底：后端返回了未知的新字段，自动将 snake_case 转为 Title Case 并显示
+      // 未知字段自动美化
       const prettyKey = key.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
       entries.push({
         label: prettyKey,
         value: value != null ? String(value) : 'N/A',
+        order: 999,
       })
     }
   }
+
+  // 按 order 排序
+  entries.sort((a, b) => a.order - b.order)
   return entries
 })
-// ---- 🆕 调试面板状态与逻辑 ----
+
+// ---- 调试面板 ----
 const showStatsModal = ref(false)
 const statsData = ref(null)
 let statsInterval = null
@@ -537,24 +563,21 @@ const showPacketsModal = ref(false)
 const packetsData = ref([])
 const packetFilter = ref('all')
 
-// 过滤抓包数据
 const filteredPackets = computed(() => {
   if (packetFilter.value === 'all') return packetsData.value
   return packetsData.value.filter((p) => p.stage === packetFilter.value)
 })
 
-// 切换统计面板
 const toggleStatsModal = (val) => {
   showStatsModal.value = val
   if (val) {
     fetchStats()
-    statsInterval = setInterval(fetchStats, 3000) // 每 3 秒轮询
+    statsInterval = setInterval(fetchStats, 3000)
   } else {
     if (statsInterval) clearInterval(statsInterval)
   }
 }
 
-// 获取统计数据
 const fetchStats = async () => {
   try {
     const res = await fetch('/api/debug/stats')
@@ -564,13 +587,11 @@ const fetchStats = async () => {
   }
 }
 
-// 打开抓包查看器
 const openPacketsModal = () => {
   showPacketsModal.value = true
   fetchPackets()
 }
 
-// 获取抓包数据
 const fetchPackets = async () => {
   try {
     const res = await fetch('/api/debug/packets?limit=50')
@@ -580,14 +601,14 @@ const fetchPackets = async () => {
   }
 }
 
-// 格式化时间戳
 const formatPacketTime = (ts) => {
   if (!ts) return '-'
   const d = new Date(ts)
   if (isNaN(d.getTime())) return ts
   return d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3, '0')
 }
-// ---- 辅助方法 ----
+
+// ---- 辅助函数 ----
 const getRowClass = (drone) => {
   if (!drone) return ''
   const classes = []
@@ -612,42 +633,37 @@ const formatTimeShort = (ts) => {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-// ---- 核心交互逻辑 ----
 const closeInfoBlock = () => {
   showInfoBlock.value = false
-  // ❌ 修改前：emit('update:modelValue', null)
-  emit('update:selectedDrone', null) // ✅ 修正 (在 closeInfoBlock 函数中)
+  emit('update:selectedDrone', null)
   selectedDroneDetail.value = null
 }
 
-// ---- 无人机选择 ----
-// ---- 在 Sidebar.vue 中 ----
+// ---- 选择无人机（核心修复） ----
 const selectDrone = async (drone) => {
-  // ✅ 1. 核心修复：通过 emit 通知父组件更新状态，绝不直接修改 prop！
+  // 清空旧数据
+  selectedDroneDetail.value = null
+  showInfoBlock.value = false
+
+  // 通知父组件
   emit('update:selectedDrone', drone)
 
-  // 2. 展开侧边栏的详情面板
-  showInfoBlock.value = true
-
-  // 3. 更新本地用于展示详情的变量 (避免修改 readonly 的 prop)
+  // 更新本地变量
   localSelectedDrone.value = drone
 
-  // 4. 获取并合并详情数据
   try {
     const detail = await fetchDroneDetail(drone.mac)
     selectedDroneDetail.value = detail
-    // 将完整详情合并到本地变量中，供模板渲染使用
     localSelectedDrone.value = { ...drone, ...detail }
   } catch (e) {
     logger.error('Fetch drone detail error:', e)
+    localSelectedDrone.value = { ...drone }
   }
 
-  // ❌ 彻底删除以下代码！Sidebar 里没有 map 实例！
-  // if (map.value && drone.latitude && drone.longitude) {
-  //   map.value.flyTo(...)
-  // }
+  showInfoBlock.value = true
 }
 
+// ---- 导出 ----
 const exportData = async () => {
   try {
     if (!store.activeDrones.length) return
@@ -656,7 +672,6 @@ const exportData = async () => {
       try {
         allData.push(await fetchDroneExport(d.mac))
       } catch (e) {
-        // 忽略导出错误，或记录日志
         logger.error('Export error:', e)
       }
     }
@@ -684,7 +699,7 @@ const exportDroneData = async () => {
   }
 }
 
-// ---- 数据新鲜度监控 ----
+// ---- 数据新鲜度 ----
 const checkDataStaleness = () => {
   const droneList = store.activeDrones
   if (droneList.length > 0) {
@@ -703,8 +718,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (staleCheckInterval) clearInterval(staleCheckInterval)
-
-  // 🆕 加上这一行，清理统计面板的轮询定时器
   if (statsInterval) clearInterval(statsInterval)
 })
 </script>

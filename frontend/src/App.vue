@@ -10,35 +10,38 @@
     />
 
     <!-- 拖拽手柄 -->
-    <Splitter
-      v-model:width="sidebarWidth" 
-    />
+    <Splitter v-model:width="sidebarWidth" />
 
     <!-- 右侧边栏 -->
-    <Sidebar 
-      v-show="sidebarOpen" 
-      :initialWidth="sidebarWidth"
+    <Sidebar
+      v-show="sidebarOpen"
+      ref="sidebarRef"
       v-model:selectedDrone="selectedDrone"
-      @show-trajectories="mapAreaRef?.showAllTrajectories()"
+      :initial-width="sidebarWidth"
+      @show-trajectories="mapAreaRef?.showSelectedTrajectory()"
       @clear-trajectories="mapAreaRef?.clearTrajectories()"
     />
 
     <!-- 隐藏状态下的恢复按钮 -->
     <button
       v-if="!mapOpen"
-      @click="mapOpen = true"
       class="restore-btn"
-      style="position: absolute; top: 12px; left: 12px; z-index: 10000;"
+      style="position: absolute; top: 12px; left: 12px; z-index: 10000"
       title="Show map"
-    >🗺 Show Map</button>
-    
+      @click="mapOpen = true"
+    >
+      🗺 Show Map
+    </button>
+
     <button
       v-if="!sidebarOpen"
-      @click="sidebarOpen = true"
       class="restore-btn"
-      style="position: absolute; top: 12px; right: 12px; z-index: 10000;"
+      style="position: absolute; top: 12px; right: 12px; z-index: 10000"
       title="Show sidebar"
-    >☰ Show Sidebar</button>
+      @click="sidebarOpen = true"
+    >
+      ☰ Show Sidebar
+    </button>
   </div>
 </template>
 
@@ -65,10 +68,10 @@ onUnmounted(() => stopSync())
 
 <style>
 /* 仅保留最基础的布局 CSS */
-#layout_container { 
-  display: flex; 
-  height: 100vh; 
-  overflow: hidden; 
+#layout_container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
   background: var(--BGCOLOR1, #f5f5f5);
 }
 

@@ -4,37 +4,51 @@ import (
 	"time"
 )
 
-// DroneData 前端展示用的无人机聚合数据
 type DroneData struct {
-	MAC               string    `json:"mac"`
-	UASID             string    `json:"uas_id"`
-	OperatorID        string    `json:"operator_id"`
-	UAType            string    `json:"ua_type"`
-	IDType            string    `json:"id_type"`
-	Standard          string    `json:"standard"`
-	Source            string    `json:"source"`
-	Latitude          float64   `json:"latitude"`
-	Longitude         float64   `json:"longitude"`
-	Altitude          float64   `json:"altitude"`
-	Speed             float64   `json:"speed"`
-	Heading           float64   `json:"heading"`
-	SpeedVertical     float64   `json:"speed_v"`
-	HeightType        string    `json:"height_type"`
-	FlightStatus      string    `json:"flight_status"`
-	HAccuracy         string    `json:"h_accuracy"`
-	VAccuracy         string    `json:"v_accuracy"`
-	SAccuracy         string    `json:"s_accuracy"`
-	LocationTimestamp string    `json:"timestamp"`
-	OperatorLatitude  float64   `json:"operator_latitude"`
-	OperatorLongitude float64   `json:"operator_longitude"`
-	OperatorAltitude  float64   `json:"operator_altitude"`
-	AreaRadiusM       int       `json:"area_radius_m"`
-	Classification    string    `json:"classification_region"`
-	SignalStrength    string    `json:"signal_strength"`
-	BatteryLevel      string    `json:"battery_level"`
-	FlightTime        string    `json:"flight_time"`
-	FirstSeen         time.Time `json:"first_seen"`
-	LastSeen          time.Time `json:"last_seen"`
+	// 标识
+	MAC        string `json:"mac"`
+	UASID      string `json:"uas_id"`
+	OperatorID string `json:"operator_id"`
+	UAType     string `json:"ua_type"` // 新增
+	IDType     string `json:"id_type"` // 新增
+
+	// 位置与运动
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	Altitude      float64 `json:"altitude"`
+	Speed         float64 `json:"speed"`
+	Heading       float64 `json:"heading"`
+	SpeedVertical float64 `json:"speed_v,omitempty"`
+
+	// 状态与精度
+	FlightStatus      string `json:"flight_status,omitempty"`
+	HeightType        string `json:"height_type,omitempty"`
+	HAccuracy         string `json:"h_accuracy,omitempty"`
+	VAccuracy         string `json:"v_accuracy,omitempty"`
+	SAccuracy         string `json:"s_accuracy,omitempty"`
+	LocationTimestamp string `json:"timestamp,omitempty"`
+
+	// 操作员区域
+	OperatorLatitude  float64 `json:"operator_latitude,omitempty"`
+	OperatorLongitude float64 `json:"operator_longitude,omitempty"`
+	OperatorAltitude  float64 `json:"operator_altitude,omitempty"`
+	Classification    string  `json:"classification,omitempty"`
+	AreaRadiusM       int     `json:"area_radius_m,omitempty"`
+
+	// 元数据
+	Standard       string    `json:"standard"`
+	Source         string    `json:"source"`
+	SignalStrength string    `json:"signal_strength,omitempty"`
+	BatteryLevel   string    `json:"battery_level,omitempty"`
+	FlightTime     string    `json:"flight_time,omitempty"`
+	FirstSeen      time.Time `json:"first_seen"`
+	LastSeen       time.Time `json:"last_seen"`
+
+	// 协议特定
+	Protocol string       `json:"protocol"`
+	GB46750  *GB46750Data `json:"gb46750,omitempty"`
+	GB42590  *GB42590Data `json:"gb42590,omitempty"`
+	ASTM     *ASTMData    `json:"astm,omitempty"`
 }
 
 // DroneMessage 解析器输出的单条原始消息
@@ -72,6 +86,36 @@ type Position struct {
 	Speed     float64   `json:"speed"`
 	Heading   float64   `json:"heading"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// GB 46750 特有的数据
+type GB46750Data struct {
+	Version           string    `json:"version,omitempty"`            // 如 "1.0"
+	UniqueID          string    `json:"unique_id,omitempty"`          // 新增
+	UACategory        string    `json:"ua_category,omitempty"`        // 微型(0) 等
+	RealNameID        string    `json:"realname_id,omitempty"`        // 实名ID
+	OperationCategory string    `json:"operation_category,omitempty"` // 操作类别
+	RCSLocType        string    `json:"rcs_loc_type,omitempty"`       // 遥控站定位类型
+	RCSLocation       *Position `json:"rcs_location,omitempty"`       // 遥控站位置
+	RCSAltitude       float64   `json:"rcs_altitude,omitempty"`       // 遥控站高度
+	Status            string    `json:"status,omitempty"`             // 飞行状态
+	CoordSystem       string    `json:"coord_system,omitempty"`       // 坐标系统
+	HAccuracy         string    `json:"h_accuracy,omitempty"`         // 水平精度
+	VAccuracy         string    `json:"v_accuracy,omitempty"`         // 垂直精度
+	SAccuracy         string    `json:"s_accuracy,omitempty"`         // 速度精度
+	TimestampMS       uint64    `json:"timestamp_ms,omitempty"`       // 时间戳(毫秒)
+	TSSAccuracy       string    `json:"ts_accuracy,omitempty"`        // 时间戳精度
+	// 若还有其他字段，继续添加
+}
+
+// ASTM F3411 特有的数据（可按需补充）
+type ASTMData struct {
+	// 根据实际需要定义
+}
+
+// GB 42590 特有的数据
+type GB42590Data struct {
+	// 根据实际需要定义
 }
 
 // Trajectory 轨迹数据
